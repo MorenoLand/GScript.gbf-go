@@ -117,7 +117,9 @@ jobs:
           version="${{ steps.version.outputs.version }}"
           mkdir -p dist/gbyte-web
           GOOS=js GOARCH=wasm go build -trimpath -o dist/gbyte-web/gbyte.wasm .
-          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/gbyte-web/
+          wasm_exec="$(find "$(go env GOROOT)" -path "*/wasm_exec.js" -type f | head -n 1)"
+          test -n "$wasm_exec"
+          cp "$wasm_exec" dist/gbyte-web/
           cp examples/web/index.html dist/gbyte-web/
           cp LICENSE dist/gbyte-web/
           (cd dist && zip -qr "gbyte-${version}-web-wasm.zip" gbyte-web)

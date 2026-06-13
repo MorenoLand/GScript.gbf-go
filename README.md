@@ -42,7 +42,8 @@ Build the browser example:
 
 ```sh
 GOOS=js GOARCH=wasm go build -o examples/web/gbyte.wasm .
-cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" examples/web/
+wasm_exec="$(find "$(go env GOROOT)" -path "*/wasm_exec.js" -type f | head -n 1)"
+cp "$wasm_exec" examples/web/
 ```
 
 The web example exposes the decompiler through Go's WASM runtime and lets you
