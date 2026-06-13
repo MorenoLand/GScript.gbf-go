@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Build native CLI
+        run: go build .
+
+      - name: Build WASM
+        shell: bash
+        run: |
+          GOOS=js GOARCH=wasm go build -o examples/web/gbyte.wasm .
+          test -s examples/web/gbyte.wasm

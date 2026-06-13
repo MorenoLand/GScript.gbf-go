@@ -1,0 +1,26 @@
+# Build outputs
+/gbyte
+/gbyte.exe
+*.wasm
+/*.exe
+
+# Generated decompiler output
+/byte_out/
+/*.gs2
+
+# Generated web example runtime files
+/examples/web/wasm_exec.js
+
+# Local Markdown notes/docs
+*.md
+!README.md
+
+# Local test and coverage artifacts
+*.test
+coverage.out
+*.prof
+
+# Editor/OS noise
+.DS_Store
+Thumbs.db
+desktop.ini

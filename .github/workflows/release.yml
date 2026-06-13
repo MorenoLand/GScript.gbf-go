@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build release artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Build CLI archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          build_unix() {
+            local goos="$1"
+            local goarch="$2"
+            local name="gbyte-${GITHUB_REF_NAME}-${goos}-${goarch}"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}/gbyte" .
+            cp LICENSE "dist/${name}/"
+            tar -C dist -czf "dist/${name}.tar.gz" "$name"
+            rm -rf "dist/${name}"
+          }
+
+          build_windows() {
+            local goarch="$1"
+            local name="gbyte-${GITHUB_REF_NAME}-windows-${goarch}"
+            GOOS=windows GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}/gbyte.exe" .
+            cp LICENSE "dist/${name}/"
+            (cd dist && zip -qr "${name}.zip" "$name")
+            rm -rf "dist/${name}"
+          }
+
+          build_windows amd64
+          build_unix linux amd64
+          build_unix linux arm64
+          build_unix darwin amd64
+          build_unix darwin arm64
+
+      - name: Build web WASM example
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/gbyte-web
+          GOOS=js GOARCH=wasm go build -trimpath -o dist/gbyte-web/gbyte.wasm .
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/gbyte-web/
+          cp examples/web/index.html dist/gbyte-web/
+          cp LICENSE dist/gbyte-web/
+          (cd dist && zip -qr "gbyte-${GITHUB_REF_NAME}-web-wasm.zip" gbyte-web)
+          rm -rf dist/gbyte-web
+
+      - name: Publish GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --generate-notes

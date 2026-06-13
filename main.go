@@ -1,0 +1,1393 @@
+package main
+
+import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode"
+)
+
+type opcode byte
+
+const (
+	opNone                opcode = 0x00
+	opJmp                 opcode = 0x01
+	opJeq                 opcode = 0x02
+	opShortCircuitOr      opcode = 0x03
+	opJne                 opcode = 0x04
+	opShortCircuitAnd     opcode = 0x05
+	opCall                opcode = 0x06
+	opRet                 opcode = 0x07
+	opSleep               opcode = 0x08
+	opLoopCounter         opcode = 0x09
+	opFunctionStart       opcode = 0x0a
+	opWaitFor             opcode = 0x0b
+	opPushNumber          opcode = 0x14
+	opPushString          opcode = 0x15
+	opPushVariable        opcode = 0x16
+	opPushArray           opcode = 0x17
+	opPushTrue            opcode = 0x18
+	opPushFalse           opcode = 0x19
+	opPushNull            opcode = 0x1a
+	opPi                  opcode = 0x1b
+	opCopy                opcode = 0x1e
+	opSwap                opcode = 0x1f
+	opPop                 opcode = 0x20
+	opConvertToFloat      opcode = 0x21
+	opConvertToString     opcode = 0x22
+	opAccessMember        opcode = 0x23
+	opConvertToObject     opcode = 0x24
+	opEndArray            opcode = 0x25
+	opNewUninitArray      opcode = 0x26
+	opSetArray            opcode = 0x27
+	opNew                 opcode = 0x28
+	opMakeVar             opcode = 0x29
+	opNewObject           opcode = 0x2a
+	opConvertToVar        opcode = 0x2b
+	opShortCircuitEnd     opcode = 0x2c
+	opAssign              opcode = 0x32
+	opEndParams           opcode = 0x33
+	opInc                 opcode = 0x34
+	opDec                 opcode = 0x35
+	opAdd                 opcode = 0x3c
+	opSubtract            opcode = 0x3d
+	opMultiply            opcode = 0x3e
+	opDivide              opcode = 0x3f
+	opModulo              opcode = 0x40
+	opPower               opcode = 0x41
+	opLogicalNot          opcode = 0x44
+	opUnarySubtract       opcode = 0x45
+	opEqual               opcode = 0x46
+	opNotEqual            opcode = 0x47
+	opLessThan            opcode = 0x48
+	opGreaterThan         opcode = 0x49
+	opLE                  opcode = 0x4a
+	opGE                  opcode = 0x4b
+	opBitwiseOr           opcode = 0x4c
+	opBitwiseAnd          opcode = 0x4d
+	opBitwiseXor          opcode = 0x4e
+	opBitwiseInvert       opcode = 0x4f
+	opInRange             opcode = 0x50
+	opIn                  opcode = 0x51
+	opObjIndex            opcode = 0x52
+	opObjType             opcode = 0x53
+	opFormat              opcode = 0x54
+	opInt                 opcode = 0x55
+	opAbs                 opcode = 0x56
+	opRandom              opcode = 0x57
+	opSin                 opcode = 0x58
+	opCos                 opcode = 0x59
+	opArcTan              opcode = 0x5a
+	opExp                 opcode = 0x5b
+	opLog                 opcode = 0x5c
+	opMin                 opcode = 0x5d
+	opMax                 opcode = 0x5e
+	opGetAngle            opcode = 0x5f
+	opGetDir              opcode = 0x60
+	opVecX                opcode = 0x61
+	opVecY                opcode = 0x62
+	opObjIndices          opcode = 0x63
+	opObjLink             opcode = 0x64
+	opShiftLeft           opcode = 0x65
+	opShiftRight          opcode = 0x66
+	opChar                opcode = 0x67
+	opObjCompare          opcode = 0x68
+	opObjTrim             opcode = 0x6e
+	opObjLength           opcode = 0x6f
+	opObjPos              opcode = 0x70
+	opJoin                opcode = 0x71
+	opObjCharAt           opcode = 0x72
+	opObjSubstring        opcode = 0x73
+	opObjStarts           opcode = 0x74
+	opObjEnds             opcode = 0x75
+	opObjTokenize         opcode = 0x76
+	opGetTranslation      opcode = 0x77
+	opObjPositions        opcode = 0x78
+	opObjSize             opcode = 0x82
+	opArrayAccess         opcode = 0x83
+	opAssignArray         opcode = 0x84
+	opMultiDimArray       opcode = 0x85
+	opAssignMultiDimArray opcode = 0x86
+	opObjSubArray         opcode = 0x87
+	opObjAddString        opcode = 0x88
+	opObjDeleteString     opcode = 0x89
+	opObjRemoveString     opcode = 0x8a
+	opObjReplaceString    opcode = 0x8b
+	opObjInsertString     opcode = 0x8c
+	opObjClear            opcode = 0x8d
+	opNewMultiDimArray    opcode = 0x8e
+	opSetRegister         opcode = 0x2d
+	opGetRegister         opcode = 0x2e
+	opMarkRegisterVar     opcode = 0x2f
+	opWith                opcode = 0x96
+	opWithEnd             opcode = 0x97
+	opForEach             opcode = 0xa3
+	opThis                opcode = 0xb4
+	opThisO               opcode = 0xb5
+	opPlayer              opcode = 0xb6
+	opPlayerO             opcode = 0xb7
+	opLevel               opcode = 0xb8
+	opTemp                opcode = 0xbd
+	opParams              opcode = 0xbe
+	opImmStringByte       opcode = 0xf0
+	opImmStringShort      opcode = 0xf1
+	opImmStringInt        opcode = 0xf2
+	opImmByte             opcode = 0xf3
+	opImmShort            opcode = 0xf4
+	opImmInt              opcode = 0xf5
+	opImmFloat            opcode = 0xf6
+)
+
+type operand struct {
+	str    string
+	number int
+	float  string
+	kind   string
+}
+
+type instruction struct {
+	addr    int
+	op      opcode
+	operand *operand
+}
+
+type module struct {
+	functions []functionDef
+	strings   []string
+	code      []instruction
+}
+
+type functionDef struct {
+	name      string
+	addr      int
+	bodyStart int
+	params    []string
+}
+
+type expr struct {
+	text   string
+	marker bool
+	kind   string
+}
+
+func readInput(inputPath string) ([]byte, error) {
+	var data []byte
+	var err error
+	if inputPath != "" {
+		data, err = os.ReadFile(inputPath)
+	} else {
+		data, err = io.ReadAll(os.Stdin)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if parsed, err := parseHexBytes(string(data)); err == nil {
+		return parsed, nil
+	}
+	return data, nil
+}
+
+func decompileData(data []byte) (string, error) {
+	mod, err := parseModule(data)
+	if err != nil {
+		return "", err
+	}
+	return decompileModule(mod), nil
+}
+
+func defaultOutputPath(inputPath string) string {
+	ext := filepath.Ext(inputPath)
+	if strings.EqualFold(ext, ".gs2bc") {
+		return strings.TrimSuffix(inputPath, ext) + ".gs2"
+	}
+	return inputPath + ".gs2"
+}
+
+func parseHexBytes(s string) ([]byte, error) {
+	var digits strings.Builder
+	for _, r := range s {
+		if r == 0 || r == '\ufeff' || r == '\ufffd' || unicode.IsSpace(r) {
+			continue
+		}
+		if !isHex(r) {
+			return nil, fmt.Errorf("non-hex character %q", r)
+		}
+		digits.WriteRune(r)
+	}
+	hex := digits.String()
+	if hex == "" || len(hex)%2 != 0 {
+		return nil, errors.New("hex input must contain an even number of digits")
+	}
+	out := make([]byte, 0, len(hex)/2)
+	for i := 0; i < len(hex); i += 2 {
+		v, err := strconv.ParseUint(hex[i:i+2], 16, 8)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, byte(v))
+	}
+	return out, nil
+}
+
+func isHex(r rune) bool {
+	return ('0' <= r && r <= '9') || ('a' <= r && r <= 'f') || ('A' <= r && r <= 'F')
+}
+
+func parseModule(data []byte) (module, error) {
+	r := byteReader{data: data}
+	mod := module{}
+	for section := 0; section < 4 && r.left() > 0; section++ {
+		sectionType, err := r.u32()
+		if err != nil {
+			return mod, err
+		}
+		switch sectionType {
+		case 1:
+			length, err := r.u32()
+			if err != nil {
+				return mod, err
+			}
+			if err := r.skip(int(length)); err != nil {
+				return mod, err
+			}
+		case 2:
+			length, err := r.u32()
+			if err != nil {
+				return mod, err
+			}
+			end := r.pos + int(length)
+			for r.pos < end {
+				addr, err := r.u32()
+				if err != nil {
+					return mod, err
+				}
+				name, err := r.cstr()
+				if err != nil {
+					return mod, err
+				}
+				mod.functions = append(mod.functions, functionDef{name: name, addr: int(addr)})
+			}
+		case 3:
+			length, err := r.u32()
+			if err != nil {
+				return mod, err
+			}
+			end := r.pos + int(length)
+			for r.pos < end {
+				s, err := r.cstr()
+				if err != nil {
+					return mod, err
+				}
+				mod.strings = append(mod.strings, s)
+			}
+		case 4:
+			length, err := r.u32()
+			if err != nil {
+				return mod, err
+			}
+			end := r.pos + int(length)
+			code, err := readInstructions(data[r.pos:end], mod.strings)
+			if err != nil {
+				return mod, err
+			}
+			mod.code = code
+			r.pos = end
+		default:
+			return mod, fmt.Errorf("unknown section type %d", sectionType)
+		}
+	}
+	mod.discoverFunctionPrologues()
+	return mod, nil
+}
+
+func (m *module) discoverFunctionPrologues() {
+	for i := range m.functions {
+		fn := &m.functions[i]
+		fn.bodyStart = fn.addr
+		if fn.addr < 0 || fn.addr >= len(m.code) || m.code[fn.addr].op != opPushArray {
+			continue
+		}
+
+		var params []string
+		pos := fn.addr + 1
+		for pos < len(m.code) && m.code[pos].op == opPushVariable {
+			if m.code[pos].operand != nil {
+				params = append(params, m.code[pos].operand.str)
+			}
+			pos++
+		}
+		if pos >= len(m.code) || m.code[pos].op != opEndParams {
+			continue
+		}
+		for left, right := 0, len(params)-1; left < right; left, right = left+1, right-1 {
+			params[left], params[right] = params[right], params[left]
+		}
+		fn.params = params
+		fn.bodyStart = pos + 1
+		if fn.bodyStart < len(m.code) && m.code[fn.bodyStart].op == opFunctionStart {
+			fn.bodyStart++
+		}
+	}
+}
+
+func readInstructions(data []byte, stringsTable []string) ([]instruction, error) {
+	r := byteReader{data: data}
+	var code []instruction
+	for r.left() > 0 {
+		b, err := r.u8()
+		if err != nil {
+			return nil, err
+		}
+		op := opcode(b)
+		if isImmediate(op) {
+			if len(code) == 0 {
+				return nil, fmt.Errorf("immediate %x without instruction", b)
+			}
+			imm, err := readImmediate(&r, op, stringsTable)
+			if err != nil {
+				return nil, err
+			}
+			code[len(code)-1].operand = &imm
+			continue
+		}
+		code = append(code, instruction{addr: len(code), op: op})
+	}
+	return code, nil
+}
+
+func isImmediate(op opcode) bool {
+	return op == opImmStringByte || op == opImmStringShort || op == opImmStringInt ||
+		op == opImmByte || op == opImmShort || op == opImmInt || op == opImmFloat
+}
+
+func readImmediate(r *byteReader, op opcode, stringsTable []string) (operand, error) {
+	switch op {
+	case opImmStringByte:
+		idx, err := r.u8()
+		return stringOperand(int(idx), stringsTable, err)
+	case opImmStringShort:
+		idx, err := r.u16()
+		return stringOperand(int(idx), stringsTable, err)
+	case opImmStringInt:
+		idx, err := r.u32()
+		return stringOperand(int(idx), stringsTable, err)
+	case opImmByte:
+		v, err := r.u8()
+		return operand{number: int(int8(v)), kind: "number"}, err
+	case opImmShort:
+		v, err := r.u16()
+		return operand{number: int(int16(v)), kind: "number"}, err
+	case opImmInt:
+		v, err := r.u32()
+		return operand{number: int(int32(v)), kind: "number"}, err
+	case opImmFloat:
+		s, err := r.cstr()
+		return operand{float: s, kind: "float"}, err
+	default:
+		return operand{}, fmt.Errorf("unknown immediate opcode %x", byte(op))
+	}
+}
+
+func stringOperand(idx int, stringsTable []string, err error) (operand, error) {
+	if err != nil {
+		return operand{}, err
+	}
+	if idx < 0 || idx >= len(stringsTable) {
+		return operand{}, fmt.Errorf("string index %d out of range", idx)
+	}
+	return operand{str: stringsTable[idx], kind: "string"}, nil
+}
+
+func decompileModule(mod module) string {
+	if len(mod.functions) > 0 {
+		funcs := append([]functionDef(nil), mod.functions...)
+		sort.Slice(funcs, func(i, j int) bool {
+			return funcs[i].addr < funcs[j].addr
+		})
+		var chunks []string
+		for i, fn := range funcs {
+			end := len(mod.code)
+			if i+1 < len(funcs) {
+				end = funcs[i+1].addr
+			}
+			bodyStart := fn.bodyStart
+			if bodyStart == 0 {
+				bodyStart = fn.addr
+			}
+			if fn.addr < 0 || fn.addr >= len(mod.code) || bodyStart >= len(mod.code) || bodyStart >= end {
+				continue
+			}
+			body := decompileRange(mod.code, bodyStart, end, 1)
+			chunks = append(chunks, "function "+fn.name+"("+strings.Join(fn.params, ", ")+")\n{\n"+strings.Join(body, "\n")+"\n}")
+		}
+		return strings.Join(chunks, "\n\n") + "\n"
+	}
+	lines := decompileRange(mod.code, 0, len(mod.code), 0)
+	return strings.Join(lines, "\n") + "\n"
+}
+
+type decompileState struct {
+	registers map[int]expr
+}
+
+func newDecompileState() *decompileState {
+	return &decompileState{registers: map[int]expr{}}
+}
+
+func decompileRange(code []instruction, start, end, indent int) []string {
+	return decompileRangeWithState(code, start, end, indent, newDecompileState())
+}
+
+func decompileRangeWithState(code []instruction, start, end, indent int, state *decompileState) []string {
+	var lines []string
+	var stack []expr
+	for pc := start; pc < end; pc++ {
+		ins := code[pc]
+		switch ins.op {
+		case opNone:
+		case opPushArray:
+			stack = append(stack, expr{marker: true})
+		case opPushString:
+			stack = append(stack, expr{text: quote(ins.operand.str), kind: "string"})
+		case opPushVariable:
+			stack = append(stack, expr{text: ins.operand.str})
+		case opPushNumber:
+			stack = append(stack, expr{text: numberText(ins.operand)})
+		case opPushTrue:
+			stack = append(stack, expr{text: "true"})
+		case opPushFalse:
+			stack = append(stack, expr{text: "false"})
+		case opPushNull:
+			stack = append(stack, expr{text: "null"})
+		case opPi:
+			stack = append(stack, expr{text: "pi"})
+		case opThis:
+			stack = append(stack, expr{text: "this"})
+		case opThisO:
+			stack = append(stack, expr{text: "thiso"})
+		case opPlayer:
+			stack = append(stack, expr{text: "player"})
+		case opPlayerO:
+			stack = append(stack, expr{text: "playero"})
+		case opLevel:
+			stack = append(stack, expr{text: "level"})
+		case opTemp:
+			stack = append(stack, expr{text: "temp"})
+		case opParams:
+			stack = append(stack, expr{text: "params"})
+		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams, opFunctionStart, opLoopCounter, opShortCircuitEnd:
+		case opNew, opNewObject, opWithEnd:
+		case opWith:
+			target := jumpTarget(ins)
+			if target > pc && target <= end && len(lines) > 0 && isConstructorLine(lines[len(lines)-1]) {
+				lines[len(lines)-1] = strings.TrimSuffix(lines[len(lines)-1], ";") + " {"
+				lines = append(lines, decompileRangeWithState(code, pc+1, target, indent+1, state)...)
+				lines = append(lines, pad(indent)+"}")
+				pc = target - 1
+			}
+		case opShortCircuitOr, opShortCircuitAnd:
+			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			stack = append(stack, expr{text: lhs.text + " " + infix(ins.op) + " " + rhs.text})
+		case opEndArray:
+			args := collectArgs(&stack)
+			stack = append(stack, expr{text: "{" + strings.Join(args, ", ") + "}"})
+		case opNewUninitArray:
+			size := popExpr(&stack)
+			stack = append(stack, expr{text: "new [" + size.text + "]"})
+		case opCopy:
+			item := popExpr(&stack)
+			stack = append(stack, item, item)
+		case opSwap:
+			a, b := popExpr(&stack), popExpr(&stack)
+			stack = append(stack, a, b)
+		case opSetRegister:
+			item := popExpr(&stack)
+			state.registers[operandNumber(ins)] = item
+			stack = append(stack, item)
+		case opGetRegister:
+			id := operandNumber(ins)
+			if item, ok := state.registers[id]; ok {
+				stack = append(stack, item)
+			} else {
+				stack = append(stack, expr{text: fmt.Sprintf("reg%d", id)})
+			}
+		case opMarkRegisterVar:
+		case opInc:
+			item := popExpr(&stack)
+			lines = append(lines, pad(indent)+item.text+" += 1;")
+			stack = append(stack, item)
+		case opDec:
+			item := popExpr(&stack)
+			lines = append(lines, pad(indent)+item.text+" -= 1;")
+			stack = append(stack, item)
+		case opAccessMember:
+			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			stack = append(stack, expr{text: memberBase(lhs.text) + "." + rhs.text})
+		case opAdd, opSubtract, opMultiply, opDivide, opModulo, opPower, opEqual, opNotEqual, opLessThan, opGreaterThan, opLE, opGE, opBitwiseOr, opBitwiseAnd, opBitwiseXor, opShiftLeft, opShiftRight, opIn, opJoin:
+			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			stack = append(stack, expr{text: lhs.text + " " + infix(ins.op) + " " + rhs.text})
+		case opInRange:
+			upper, lower, item := popExpr(&stack), popExpr(&stack), popExpr(&stack)
+			stack = append(stack, expr{text: item.text + " in <" + lower.text + ", " + upper.text + ">"})
+		case opLogicalNot:
+			item := popExpr(&stack)
+			stack = append(stack, expr{text: "!" + memberBase(item.text)})
+		case opUnarySubtract:
+			item := popExpr(&stack)
+			stack = append(stack, expr{text: "-" + memberBase(item.text)})
+		case opBitwiseInvert:
+			item := popExpr(&stack)
+			stack = append(stack, expr{text: "~" + memberBase(item.text)})
+		case opArrayAccess:
+			index, arr := popExpr(&stack), popExpr(&stack)
+			stack = append(stack, expr{text: arr.text + "[" + index.text + "]"})
+		case opAssignArray, opSetArray:
+			rhs, index, arr := popExpr(&stack), popExpr(&stack), popExpr(&stack)
+			lines = append(lines, pad(indent)+arr.text+"["+index.text+"] = "+rhs.text+";")
+		case opMultiDimArray:
+			stack = append(stack, multiDimArrayExpr(&stack))
+		case opAssignMultiDimArray:
+			rhs := popExpr(&stack)
+			target := multiDimTarget(&stack)
+			lines = append(lines, pad(indent)+target+" = "+rhs.text+";")
+		case opObjStarts:
+			stack = append(stack, objectCall(&stack, "starts", 1, false))
+		case opGetTranslation:
+			arg := popExpr(&stack)
+			stack = append(stack, expr{text: "_(" + arg.text + ")"})
+		case opObjSubstring:
+			stack = append(stack, objectCall(&stack, "substring", 2, false))
+		case opObjSize:
+			stack = append(stack, objectCall(&stack, "size", 0, false))
+		case opObjIndex:
+			stack = append(stack, objectCall(&stack, "index", 1, false))
+		case opInt:
+			stack = append(stack, functionCall(&stack, "int", 1))
+		case opChar:
+			stack = append(stack, functionCall(&stack, "char", 1))
+		case opSleep:
+			stack = append(stack, functionCall(&stack, "sleep", 1))
+		case opWaitFor:
+			stack = append(stack, functionCall(&stack, "waitfor", 1))
+		case opMakeVar:
+			stack = append(stack, functionCall(&stack, "makevar", 1))
+		case opAbs:
+			stack = append(stack, functionCall(&stack, "abs", 1))
+		case opRandom:
+			stack = append(stack, functionCall(&stack, "random", 2))
+		case opSin:
+			stack = append(stack, functionCall(&stack, "sin", 1))
+		case opCos:
+			stack = append(stack, functionCall(&stack, "cos", 1))
+		case opArcTan:
+			stack = append(stack, functionCall(&stack, "arctan", 1))
+		case opExp:
+			stack = append(stack, functionCall(&stack, "exp", 1))
+		case opLog:
+			stack = append(stack, functionCall(&stack, "log", 1))
+		case opMin:
+			stack = append(stack, functionCall(&stack, "min", 2))
+		case opMax:
+			stack = append(stack, functionCall(&stack, "max", 2))
+		case opGetAngle:
+			stack = append(stack, functionCall(&stack, "getangle", 2))
+		case opGetDir:
+			stack = append(stack, functionCall(&stack, "getdir", 2))
+		case opVecX:
+			stack = append(stack, functionCall(&stack, "vecx", 1))
+		case opVecY:
+			stack = append(stack, functionCall(&stack, "vecy", 1))
+		case opObjCompare:
+			stack = append(stack, functionCall(&stack, "objcompare", 2))
+		case opFormat:
+			args := collectArgs(&stack)
+			stack = append(stack, expr{text: "format(" + strings.Join(args, ", ") + ")"})
+		case opObjType:
+			stack = append(stack, objectCall(&stack, "type", 0, false))
+		case opObjIndices:
+			stack = append(stack, objectCall(&stack, "indices", 0, false))
+		case opObjLink:
+			stack = append(stack, objectCall(&stack, "link", 0, false))
+		case opObjTrim:
+			stack = append(stack, objectCall(&stack, "trim", 0, false))
+		case opObjLength:
+			stack = append(stack, objectCall(&stack, "length", 0, false))
+		case opObjPos:
+			stack = append(stack, objectCall(&stack, "pos", 1, false))
+		case opObjCharAt:
+			stack = append(stack, objectCall(&stack, "charat", 1, false))
+		case opObjEnds:
+			stack = append(stack, objectCall(&stack, "ends", 1, false))
+		case opObjTokenize:
+			stack = append(stack, objectCall(&stack, "tokenize", 1, false))
+		case opObjPositions:
+			stack = append(stack, objectCall(&stack, "positions", 1, false))
+		case opObjSubArray:
+			stack = append(stack, objectCall(&stack, "subarray", 2, false))
+		case opObjAddString:
+			stack = append(stack, objectCall(&stack, "add", 1, true))
+		case opObjDeleteString:
+			stack = append(stack, objectCall(&stack, "delete", 1, true))
+		case opObjRemoveString:
+			stack = append(stack, objectCall(&stack, "remove", 1, true))
+		case opObjReplaceString:
+			stack = append(stack, objectCall(&stack, "replace", 2, true))
+		case opObjInsertString:
+			stack = append(stack, objectCall(&stack, "insert", 2, true))
+		case opObjClear:
+			stack = append(stack, objectCall(&stack, "clear", 0, true))
+		case opNewMultiDimArray:
+			stack = append(stack, newMultiDimArrayExpr(&stack))
+		case opAssign:
+			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			rhs = normalizeAssignmentValue(lhs, rhs)
+			if isObjectNameExpr(lhs) && rhs.kind == "string" && strings.HasPrefix(unquoteText(rhs.text), "Gui") {
+				lines = append(lines, pad(indent)+"new "+unquoteText(rhs.text)+"("+lhs.text+");")
+			} else {
+				lines = append(lines, pad(indent)+lhs.text+" = "+rhs.text+";")
+			}
+		case opCall:
+			call := buildCall(&stack)
+			stack = append(stack, expr{text: call, kind: "call"})
+		case opPop:
+			item := popExpr(&stack)
+			if item.kind == "call" && item.text != "" {
+				lines = append(lines, pad(indent)+item.text+";")
+			}
+		case opJne, opJeq:
+			target := jumpTarget(ins)
+			condition := popExpr(&stack).text
+			if target > pc && target <= end {
+				if ins.op == opJeq {
+					condition = "!(" + condition + ")"
+				}
+				body := decompileRangeWithState(code, pc+1, target, indent+1, state)
+				if forLoop, ok := recoverForLoop(lines, body, condition, pc, indent); ok {
+					lines = forLoop
+				} else {
+					lines = append(lines, pad(indent)+"if ("+condition+")")
+					lines = append(lines, pad(indent)+"{")
+					lines = append(lines, body...)
+					lines = append(lines, pad(indent)+"}")
+				}
+				pc = target - 1
+			} else {
+				lines = append(lines, pad(indent)+fmt.Sprintf("if (%s) goto label_%d;", condition, target))
+			}
+		case opJmp:
+			target := jumpTarget(ins)
+			if dispatchLines, newPC, ok := recoverBackwardDispatch(code, pc, target, end, indent, state); ok {
+				lines = append(lines, dispatchLines...)
+				pc = newPC
+			} else if target < end {
+				lines = append(lines, pad(indent)+fmt.Sprintf("goto label_%d;", target))
+			}
+		case opForEach:
+			target := jumpTarget(ins)
+			_, collection, iter := popExpr(&stack), popExpr(&stack), popExpr(&stack)
+			condition := iter.text + " in " + collection.text
+			if target > pc && target <= end {
+				body := decompileRangeWithState(code, pc+1, target, indent+1, state)
+				body = trimForEachBookkeeping(body)
+				lines = append(lines, pad(indent)+"for ("+condition+")")
+				lines = append(lines, pad(indent)+"{")
+				lines = append(lines, body...)
+				lines = append(lines, pad(indent)+"}")
+				pc = target - 1
+			} else {
+				stack = append(stack, expr{text: condition})
+			}
+		case opRet:
+			if len(stack) > 0 {
+				ret := popExpr(&stack).text
+				if !(indent == 1 && isTerminalRet(code, pc, end) && ret == "0") {
+					lines = append(lines, pad(indent)+"return "+ret+";")
+				}
+			} else {
+				if !(indent == 1 && isTerminalRet(code, pc, end)) {
+					lines = append(lines, pad(indent)+"return;")
+				}
+			}
+		default:
+			lines = append(lines, pad(indent)+fmt.Sprintf("// unhandled opcode 0x%02x at %d", byte(ins.op), ins.addr))
+		}
+	}
+	return collapseNestedIfs(lines)
+}
+
+func recoverForLoop(lines []string, body []string, condition string, pc int, indent int) ([]string, bool) {
+	if len(lines) == 0 || len(body) < 2 {
+		return nil, false
+	}
+
+	gotoLine := strings.TrimSpace(body[len(body)-1])
+	if !strings.HasPrefix(gotoLine, "goto label_") || !strings.HasSuffix(gotoLine, ";") {
+		return nil, false
+	}
+	labelText := strings.TrimSuffix(strings.TrimPrefix(gotoLine, "goto label_"), ";")
+	label, err := strconv.Atoi(labelText)
+	if err != nil || label > pc {
+		return nil, false
+	}
+
+	workBody := append([]string(nil), body[:len(body)-1]...)
+	if len(workBody) == 0 {
+		return nil, false
+	}
+
+	incLine := strings.TrimSpace(workBody[len(workBody)-1])
+	if len(workBody) >= 2 {
+		maybeBare := strings.TrimSpace(workBody[len(workBody)-1])
+		prev := strings.TrimSpace(workBody[len(workBody)-2])
+		if strings.HasSuffix(prev, " += 1;") && maybeBare == strings.TrimSuffix(strings.TrimSuffix(prev, " += 1;"), " ")+";" {
+			workBody = workBody[:len(workBody)-1]
+			incLine = strings.TrimSpace(workBody[len(workBody)-1])
+		}
+	}
+	if !strings.HasSuffix(incLine, " += 1;") {
+		return nil, false
+	}
+	incVar := strings.TrimSuffix(incLine, " += 1;")
+
+	initLine := strings.TrimSpace(lines[len(lines)-1])
+	initPrefix := incVar + " = "
+	if !strings.HasPrefix(initLine, initPrefix) || !strings.HasSuffix(initLine, ";") {
+		return nil, false
+	}
+	if !strings.Contains(condition, incVar) {
+		return nil, false
+	}
+
+	init := strings.TrimSuffix(initLine, ";")
+	inc := strings.TrimSuffix(incLine, ";")
+	result := append([]string(nil), lines[:len(lines)-1]...)
+	result = append(result, pad(indent)+"for ("+init+"; "+condition+"; "+inc+")")
+	result = append(result, pad(indent)+"{")
+	result = append(result, workBody[:len(workBody)-1]...)
+	result = append(result, pad(indent)+"}")
+	return result, true
+}
+
+type dispatchCase struct {
+	condition string
+	target    int
+}
+
+func recoverBackwardDispatch(code []instruction, pc, target, end, indent int, state *decompileState) ([]string, int, bool) {
+	if target <= pc || target >= end {
+		return nil, 0, false
+	}
+	cases, tail, ok := parseBackwardDispatchCases(code, pc, target, end)
+	if !ok || len(cases) == 0 {
+		return nil, 0, false
+	}
+	commonEnd, ok := dispatchCommonEnd(code, cases, target)
+	if !ok || commonEnd <= target || commonEnd > end {
+		return nil, 0, false
+	}
+
+	targets := make([]int, len(cases))
+	for i, c := range cases {
+		targets[i] = c.target
+	}
+	sort.Ints(targets)
+	targetToNext := map[int]int{}
+	for i, t := range targets {
+		next := target
+		if i+1 < len(targets) {
+			next = targets[i+1]
+		}
+		targetToNext[t] = next
+	}
+
+	var lines []string
+	for i, c := range cases {
+		bodyEnd := targetToNext[c.target]
+		if bodyEnd <= c.target {
+			return nil, 0, false
+		}
+		body := decompileRangeWithState(code, c.target, bodyEnd, indent+1, state)
+		body = trimTrailingGoto(body, commonEnd)
+		if i == 0 {
+			lines = append(lines, pad(indent)+"if ("+c.condition+")")
+		} else {
+			lines = append(lines, pad(indent)+"else if ("+c.condition+")")
+		}
+		lines = append(lines, pad(indent)+"{")
+		lines = append(lines, body...)
+		lines = append(lines, pad(indent)+"}")
+	}
+	return lines, skipDispatchTail(code, tail, commonEnd, end), true
+}
+
+func parseBackwardDispatchCases(code []instruction, pc, target, end int) ([]dispatchCase, int, bool) {
+	selector, pos, ok := dispatchSelector(code, target)
+	if !ok {
+		return nil, 0, false
+	}
+	var cases []dispatchCase
+	for pos+4 < end {
+		if code[pos].op != opCopy || code[pos+1].op != opPushString || code[pos+2].op != opEqual {
+			break
+		}
+		jump := code[pos+3]
+		if jump.op != opJeq && jump.op != opJne {
+			break
+		}
+		caseTarget := jumpTarget(jump)
+		if caseTarget <= pc || caseTarget >= target {
+			break
+		}
+		lit := quote(code[pos+1].operand.str)
+		condition := selector + " == " + lit
+		if jump.op == opJne {
+			condition = selector + " != " + lit
+		}
+		cases = append(cases, dispatchCase{condition: condition, target: caseTarget})
+		pos += 4
+	}
+	if len(cases) == 0 {
+		return nil, 0, false
+	}
+	if pos < end && code[pos].op == opPop {
+		pos++
+	}
+	return cases, pos, true
+}
+
+func dispatchSelector(code []instruction, target int) (string, int, bool) {
+	var stack []expr
+	for pos := target; pos < len(code); pos++ {
+		ins := code[pos]
+		if ins.op == opCopy {
+			if len(stack) != 1 {
+				return "", 0, false
+			}
+			return stack[0].text, pos, true
+		}
+		switch ins.op {
+		case opPushVariable:
+			if ins.operand == nil {
+				return "", 0, false
+			}
+			stack = append(stack, expr{text: ins.operand.str})
+		case opPushString:
+			if ins.operand == nil {
+				return "", 0, false
+			}
+			stack = append(stack, expr{text: quote(ins.operand.str), kind: "string"})
+		case opPushNumber:
+			stack = append(stack, expr{text: numberText(ins.operand)})
+		case opThis:
+			stack = append(stack, expr{text: "this"})
+		case opTemp:
+			stack = append(stack, expr{text: "temp"})
+		case opPlayer:
+			stack = append(stack, expr{text: "player"})
+		case opLevel:
+			stack = append(stack, expr{text: "level"})
+		case opGetRegister:
+			stack = append(stack, expr{text: fmt.Sprintf("reg%d", operandNumber(ins))})
+		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar:
+		case opAccessMember:
+			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			stack = append(stack, expr{text: memberBase(lhs.text) + "." + rhs.text})
+		case opArrayAccess:
+			index, arr := popExpr(&stack), popExpr(&stack)
+			stack = append(stack, expr{text: arr.text + "[" + index.text + "]"})
+		default:
+			return "", 0, false
+		}
+	}
+	return "", 0, false
+}
+
+func dispatchCommonEnd(code []instruction, cases []dispatchCase, dispatchStart int) (int, bool) {
+	commonEnd := -1
+	for _, c := range cases {
+		limit := dispatchStart
+		for _, other := range cases {
+			if other.target > c.target && other.target < limit {
+				limit = other.target
+			}
+		}
+		endJump := -1
+		for i := c.target; i < limit; i++ {
+			if code[i].op == opJmp && jumpTarget(code[i]) >= dispatchStart {
+				endJump = jumpTarget(code[i])
+			}
+		}
+		if endJump < 0 {
+			return 0, false
+		}
+		if commonEnd < 0 {
+			commonEnd = endJump
+		} else if commonEnd != endJump {
+			return 0, false
+		}
+	}
+	return commonEnd, commonEnd >= 0
+}
+
+func trimTrailingGoto(body []string, target int) []string {
+	if len(body) == 0 {
+		return body
+	}
+	want := fmt.Sprintf("goto label_%d;", target)
+	if strings.TrimSpace(body[len(body)-1]) == want {
+		return body[:len(body)-1]
+	}
+	return body
+}
+
+func normalizeAssignmentValue(lhs, rhs expr) expr {
+	if !isExtentField(lhs.text) {
+		return rhs
+	}
+	a, b, ok := parseNumericPairLiteral(rhs.text)
+	if !ok {
+		return rhs
+	}
+	rhs.text = "{" + b + ", " + a + "}"
+	return rhs
+}
+
+func isExtentField(name string) bool {
+	last := name
+	if idx := strings.LastIndex(last, "."); idx >= 0 {
+		last = last[idx+1:]
+	}
+	switch strings.ToLower(last) {
+	case "clientextent", "extent", "minextent":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseNumericPairLiteral(value string) (string, string, bool) {
+	if !strings.HasPrefix(value, "{") || !strings.HasSuffix(value, "}") {
+		return "", "", false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "{"), "}"))
+	parts := strings.Split(body, ",")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	a := strings.TrimSpace(parts[0])
+	b := strings.TrimSpace(parts[1])
+	if !isNumberLiteral(a) || !isNumberLiteral(b) {
+		return "", "", false
+	}
+	return a, b, true
+}
+
+func isNumberLiteral(value string) bool {
+	if value == "" {
+		return false
+	}
+	_, err := strconv.ParseFloat(value, 64)
+	return err == nil
+}
+
+func skipDispatchTail(code []instruction, tail, commonEnd, end int) int {
+	pos := tail
+	if pos+1 < end && code[pos].op == opPushNumber && operandNumber(code[pos]) == 0 && code[pos+1].op == opRet {
+		pos += 2
+	}
+	if commonEnd > pos {
+		pos = commonEnd
+		if pos < end && code[pos].op == opPop {
+			pos++
+		}
+		if pos+1 < end && code[pos].op == opPushNumber && operandNumber(code[pos]) == 0 && code[pos+1].op == opRet {
+			pos += 2
+		}
+	}
+	return pos - 1
+}
+
+func trimForEachBookkeeping(body []string) []string {
+	out := append([]string(nil), body...)
+	if len(out) > 0 && isGotoLine(strings.TrimSpace(out[len(out)-1])) {
+		out = out[:len(out)-1]
+	}
+	if len(out) > 0 {
+		last := strings.TrimSpace(out[len(out)-1])
+		if strings.HasSuffix(last, " += 1;") || strings.HasSuffix(last, " -= 1;") {
+			out = out[:len(out)-1]
+		}
+	}
+	return out
+}
+
+func isGotoLine(line string) bool {
+	if !strings.HasPrefix(line, "goto label_") || !strings.HasSuffix(line, ";") {
+		return false
+	}
+	_, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(line, "goto label_"), ";"))
+	return err == nil
+}
+
+func isTerminalRet(code []instruction, pc int, end int) bool {
+	for i := pc + 1; i < end; i++ {
+		if code[i].op == opJmp && jumpTarget(code[i]) >= end {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func collapseNestedIfs(lines []string) []string {
+	for {
+		changed := false
+		out := make([]string, 0, len(lines))
+		for i := 0; i < len(lines); i++ {
+			cond1, ok := parseIfLine(lines[i])
+			if !ok || i+4 >= len(lines) || strings.TrimSpace(lines[i+1]) != "{" {
+				out = append(out, lines[i])
+				continue
+			}
+			closeOuter := matchingCloseBrace(lines, i+1)
+			if closeOuter < 0 {
+				out = append(out, lines[i])
+				continue
+			}
+			cond2, ok := parseIfLine(lines[i+2])
+			if !ok || strings.TrimSpace(lines[i+3]) != "{" {
+				out = append(out, lines[i])
+				continue
+			}
+			closeInner := matchingCloseBrace(lines, i+3)
+			if closeInner != closeOuter-1 {
+				out = append(out, lines[i])
+				continue
+			}
+			indent := leadingWhitespace(lines[i])
+			out = append(out, indent+"if ("+cond1+" && "+cond2+")")
+			out = append(out, lines[i+1])
+			out = append(out, unindentOnce(lines[i+4:closeInner])...)
+			out = append(out, lines[closeOuter])
+			i = closeOuter
+			changed = true
+		}
+		lines = out
+		if !changed {
+			return lines
+		}
+	}
+}
+
+func parseIfLine(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "if (") || !strings.HasSuffix(trimmed, ")") {
+		return "", false
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(trimmed, "if ("), ")"), true
+}
+
+func matchingCloseBrace(lines []string, openIndex int) int {
+	depth := 0
+	for i := openIndex; i < len(lines); i++ {
+		switch strings.TrimSpace(lines[i]) {
+		case "{":
+			depth++
+		case "}":
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func leadingWhitespace(s string) string {
+	return s[:len(s)-len(strings.TrimLeft(s, " \t"))]
+}
+
+func unindentOnce(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = strings.TrimPrefix(line, "    ")
+	}
+	return out
+}
+
+func buildCall(stack *[]expr) string {
+	callee := popExpr(stack).text
+	args := collectCallArgs(stack)
+	return callee + "(" + strings.Join(args, ", ") + ")"
+}
+
+func collectCallArgs(stack *[]expr) []string {
+	args := []string{}
+	for len(*stack) > 0 {
+		item := popExpr(stack)
+		if item.marker {
+			break
+		}
+		args = append(args, item.text)
+	}
+	return args
+}
+
+func functionCall(stack *[]expr, name string, argc int) expr {
+	args := fixedArgs(stack, argc)
+	return expr{text: name + "(" + strings.Join(args, ", ") + ")", kind: "call"}
+}
+
+func objectCall(stack *[]expr, name string, argc int, statement bool) expr {
+	args := fixedArgs(stack, argc)
+	obj := popExpr(stack)
+	kind := ""
+	if statement {
+		kind = "call"
+	}
+	return expr{text: memberBase(obj.text) + "." + name + "(" + strings.Join(args, ", ") + ")", kind: kind}
+}
+
+func multiDimArrayExpr(stack *[]expr) expr {
+	return expr{text: multiDimTarget(stack)}
+}
+
+func multiDimTarget(stack *[]expr) string {
+	parts := drainStack(stack)
+	if len(parts) == 0 {
+		return "/* missing */"
+	}
+	target := parts[0]
+	for _, index := range parts[1:] {
+		target += "[" + index + "]"
+	}
+	return target
+}
+
+func newMultiDimArrayExpr(stack *[]expr) expr {
+	dims := drainStack(stack)
+	if len(dims) == 0 {
+		return expr{text: "new []"}
+	}
+	var out strings.Builder
+	out.WriteString("new ")
+	for _, dim := range dims {
+		out.WriteString("[")
+		out.WriteString(dim)
+		out.WriteString("]")
+	}
+	return expr{text: out.String()}
+}
+
+func drainStack(stack *[]expr) []string {
+	items := make([]string, 0, len(*stack))
+	for len(*stack) > 0 {
+		items = append(items, popExpr(stack).text)
+	}
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
+	return items
+}
+
+func fixedArgs(stack *[]expr, argc int) []string {
+	args := make([]string, 0, argc)
+	for i := 0; i < argc; i++ {
+		args = append(args, popExpr(stack).text)
+	}
+	for i, j := 0, len(args)-1; i < j; i, j = i+1, j-1 {
+		args[i], args[j] = args[j], args[i]
+	}
+	return args
+}
+
+func collectArgs(stack *[]expr) []string {
+	args := []string{}
+	for len(*stack) > 0 {
+		item := popExpr(stack)
+		if item.marker {
+			break
+		}
+		args = append(args, item.text)
+	}
+	for i, j := 0, len(args)-1; i < j; i, j = i+1, j-1 {
+		args[i], args[j] = args[j], args[i]
+	}
+	return args
+}
+
+func infix(op opcode) string {
+	switch op {
+	case opAdd:
+		return "+"
+	case opSubtract:
+		return "-"
+	case opMultiply:
+		return "*"
+	case opDivide:
+		return "/"
+	case opModulo:
+		return "%"
+	case opPower:
+		return "^"
+	case opShortCircuitAnd:
+		return "&&"
+	case opShortCircuitOr:
+		return "||"
+	case opEqual:
+		return "=="
+	case opNotEqual:
+		return "!="
+	case opLessThan:
+		return "<"
+	case opGreaterThan:
+		return ">"
+	case opLE:
+		return "<="
+	case opGE:
+		return ">="
+	case opBitwiseOr:
+		return "|"
+	case opBitwiseAnd:
+		return "&"
+	case opBitwiseXor:
+		return "^"
+	case opShiftLeft:
+		return "<<"
+	case opShiftRight:
+		return ">>"
+	case opIn:
+		return "in"
+	case opJoin:
+		return "@"
+	default:
+		return "?"
+	}
+}
+
+func memberBase(s string) string {
+	if strings.Contains(s, " @ ") && !(strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")")) {
+		return "(" + s + ")"
+	}
+	return s
+}
+
+func popExpr(stack *[]expr) expr {
+	if len(*stack) == 0 {
+		return expr{text: "/* missing */"}
+	}
+	last := (*stack)[len(*stack)-1]
+	*stack = (*stack)[:len(*stack)-1]
+	return last
+}
+
+func jumpTarget(ins instruction) int {
+	if ins.operand == nil {
+		return ins.addr + 1
+	}
+	return ins.operand.number
+}
+
+func operandNumber(ins instruction) int {
+	if ins.operand == nil {
+		return 0
+	}
+	return ins.operand.number
+}
+
+func numberText(op *operand) string {
+	if op == nil {
+		return "0"
+	}
+	if op.kind == "float" {
+		return op.float
+	}
+	return strconv.Itoa(op.number)
+}
+
+func quote(s string) string {
+	return strconv.Quote(s)
+}
+
+func unquoteText(s string) string {
+	if unquoted, err := strconv.Unquote(s); err == nil {
+		return unquoted
+	}
+	return s
+}
+
+func isConstructorLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "new ") && strings.HasSuffix(trimmed, ");")
+}
+
+func isObjectNameExpr(value expr) bool {
+	return value.kind == "string" || strings.Contains(value.text, " @ ")
+}
+
+func pad(level int) string {
+	return strings.Repeat("    ", level)
+}
+
+type byteReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *byteReader) left() int {
+	return len(r.data) - r.pos
+}
+
+func (r *byteReader) skip(n int) error {
+	if n < 0 || r.left() < n {
+		return io.ErrUnexpectedEOF
+	}
+	r.pos += n
+	return nil
+}
+
+func (r *byteReader) u8() (byte, error) {
+	if r.left() < 1 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	v := r.data[r.pos]
+	r.pos++
+	return v, nil
+}
+
+func (r *byteReader) u16() (uint16, error) {
+	if r.left() < 2 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	v := binary.BigEndian.Uint16(r.data[r.pos:])
+	r.pos += 2
+	return v, nil
+}
+
+func (r *byteReader) u32() (uint32, error) {
+	if r.left() < 4 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	v := binary.BigEndian.Uint32(r.data[r.pos:])
+	r.pos += 4
+	return v, nil
+}
+
+func (r *byteReader) cstr() (string, error) {
+	start := r.pos
+	for r.pos < len(r.data) && r.data[r.pos] != 0 {
+		r.pos++
+	}
+	if r.pos >= len(r.data) {
+		return "", io.ErrUnexpectedEOF
+	}
+	s := string(r.data[start:r.pos])
+	r.pos++
+	return s, nil
+}

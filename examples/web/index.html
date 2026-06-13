@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoByte WASM Test</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Consolas, "Segoe UI", sans-serif;
+      background: #151922;
+      color: #e7ecf5;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #2a3141;
+      background: #1b2030;
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 650;
+    }
+    main {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 14px;
+      padding: 14px 16px 16px;
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(260px, 420px) auto 1fr;
+      gap: 12px;
+      align-items: end;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      gap: 16px;
+      min-height: 0;
+    }
+    section, .field {
+      min-width: 0;
+    }
+    label {
+      display: block;
+      margin: 0 0 8px;
+      color: #aeb8cc;
+      font-size: 13px;
+    }
+    textarea, pre {
+      box-sizing: border-box;
+      width: 100%;
+      height: calc(100vh - 158px);
+      min-height: 420px;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid #30394b;
+      border-radius: 6px;
+      background: #0f131b;
+      color: #e9eef9;
+      font: 13px/1.45 Consolas, monospace;
+      resize: vertical;
+      white-space: pre-wrap;
+      overflow: auto;
+    }
+    input[type="file"] {
+      width: 100%;
+    }
+    button {
+      border: 1px solid #3a465d;
+      border-radius: 6px;
+      background: #293347;
+      color: #fff;
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: .55;
+      cursor: default;
+    }
+    .status {
+      align-self: center;
+      min-height: 20px;
+      color: #8fd19e;
+      font-size: 13px;
+    }
+    .status.error {
+      color: #ff9f9f;
+    }
+    @media (max-width: 800px) {
+      .toolbar, .workspace {
+        grid-template-columns: 1fr;
+      }
+      textarea, pre {
+        height: 360px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>GoByte WASM Test</h1>
+  </header>
+  <main>
+    <div class="toolbar">
+      <div class="field">
+        <label for="fileInput">Bytecode file</label>
+        <input id="fileInput" type="file" accept=".gs2bc,.bin,.txt">
+      </div>
+      <div class="actions">
+        <button id="decompileText" disabled>Decompile Hex</button>
+        <button id="clearOutput">Clear</button>
+      </div>
+      <div id="status" class="status">Loading WASM...</div>
+    </div>
+    <div class="workspace">
+      <section>
+        <label for="hexInput">Hex input</label>
+        <textarea id="hexInput" spellcheck="false">0000 0001 0000 0004 0000 0000 0000 0002
+0000 0000 0000 0003 0000 0033 6372 6561
+7465 6400 7669 6e65 7332 2e70 6e67 0073
+6574 696d 6700 6472 6177 6f76 6572 706c
+6179 6572 0064 6f6e 7462 6c6f 636b 0000
+0000 0400 0000 1c16 f000 2104 f310 1715
+f001 16f0 0206 2017 16f0 0306 2017 16f0
+0406 20</textarea>
+      </section>
+      <section>
+        <label for="output">GS2 output</label>
+        <pre id="output"></pre>
+      </section>
+    </div>
+  </main>
+
+  <script src="wasm_exec.js"></script>
+  <script>
+    const statusEl = document.getElementById("status");
+    const outputEl = document.getElementById("output");
+    const textButton = document.getElementById("decompileText");
+    const clearButton = document.getElementById("clearOutput");
+    const fileInput = document.getElementById("fileInput");
+    const hexInput = document.getElementById("hexInput");
+
+    function setStatus(text, error = false) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle("error", error);
+    }
+
+    function showResult(result) {
+      if (!result.ok) {
+        outputEl.textContent = "";
+        setStatus(result.error || "Decompile failed", true);
+        return;
+      }
+      outputEl.textContent = result.output;
+      setStatus("Decompiled");
+    }
+
+    textButton.addEventListener("click", () => {
+      showResult(globalThis.GByteDecompileText(hexInput.value));
+    });
+
+    clearButton.addEventListener("click", () => {
+      outputEl.textContent = "";
+      setStatus("Ready");
+    });
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      showResult(globalThis.GByteDecompileBytes(bytes));
+    });
+
+    async function boot() {
+      const go = new Go();
+      const result = await WebAssembly.instantiateStreaming(fetch("gbyte.wasm"), go.importObject);
+      go.run(result.instance);
+      textButton.disabled = false;
+      setStatus("Ready");
+    }
+
+    boot().catch((err) => {
+      setStatus(err && err.message ? err.message : String(err), true);
+    });
+  </script>
+</body>
+</html>
