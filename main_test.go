@@ -42,3 +42,71 @@ func TestDecompileDataSkipsWeaponRecordPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestNewObjectKeepsNamedConstructorsAndAnonymousObjects(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushString, operand: &operand{str: "GuiTest", kind: "string"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "GuiWindowCtrl", kind: "string"}},
+		{addr: 2, op: opNewObject},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "remotecontrol"}},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "options"}},
+		{addr: 6, op: opAccessMember},
+		{addr: 7, op: opPushVariable, operand: &operand{str: "unknown_object"}},
+		{addr: 8, op: opPushString, operand: &operand{str: "TStaticVar", kind: "string"}},
+		{addr: 9, op: opNewObject},
+		{addr: 10, op: opAssign},
+	}, 0, 11, 0)
+
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, `new GuiWindowCtrl("GuiTest");`) {
+		t.Fatalf("named constructor was not preserved:\n%s", got)
+	}
+	if !strings.Contains(got, `remotecontrol.options = new TStaticVar();`) {
+		t.Fatalf("anonymous object construction was not recovered:\n%s", got)
+	}
+}
+
+func TestEmbeddedSyntheticFunctionRanges(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "parent"}},
+		{addr: 1, op: opJmp, operand: &operand{number: 6, kind: "number"}},
+		{addr: 2, op: opPushArray},
+		{addr: 3, op: opEndParams},
+		{addr: 4, op: opFunctionStart},
+		{addr: 5, op: opRet},
+		{addr: 6, op: opPushVariable, operand: &operand{str: "after"}},
+		{addr: 7, op: opRet},
+	}
+	funcs := []functionDef{
+		{name: "parent", addr: 0, bodyStart: 0},
+		{name: "public.function_357_2", addr: 2, bodyStart: 5},
+	}
+	ranges := buildFunctionRanges(funcs, code)
+	if ranges[0].end != len(code) {
+		t.Fatalf("parent ended at %d, want %d", ranges[0].end, len(code))
+	}
+	if ranges[1].end != 6 {
+		t.Fatalf("synthetic ended at %d, want 6", ranges[1].end)
+	}
+	if !skipsEmbeddedFunction(nestedFunctionRanges(ranges[0], ranges), 2, 6) {
+		t.Fatalf("parent did not recognize embedded function jump")
+	}
+}
+
+func TestDispatchSelectorUsesRecoveredRegisters(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opGetRegister, operand: &operand{number: 1, kind: "number"}},
+		{addr: 1, op: opConvertToObject},
+		{addr: 2, op: opPushVariable, operand: &operand{str: "title"}},
+		{addr: 3, op: opAccessMember},
+		{addr: 4, op: opCopy},
+	}
+	state := newDecompileState()
+	state.registers[1] = expr{text: "obj"}
+
+	selector, pos, ok := dispatchSelector(code, 0, state)
+	if !ok || selector != "obj.title" || pos != 4 {
+		t.Fatalf("dispatch selector = %q, %d, %v; want obj.title, 4, true", selector, pos, ok)
+	}
+}

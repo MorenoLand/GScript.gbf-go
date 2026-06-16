@@ -170,6 +170,12 @@ type functionDef struct {
 	params    []string
 }
 
+type functionRange struct {
+	functionDef
+	start int
+	end   int
+}
+
 type expr struct {
 	text   string
 	marker bool
@@ -444,20 +450,17 @@ func decompileModule(mod module) string {
 		sort.Slice(funcs, func(i, j int) bool {
 			return funcs[i].addr < funcs[j].addr
 		})
+		ranges := buildFunctionRanges(funcs, mod.code)
 		var chunks []string
-		for i, fn := range funcs {
-			end := len(mod.code)
-			if i+1 < len(funcs) {
-				end = funcs[i+1].addr
-			}
-			bodyStart := fn.bodyStart
-			if bodyStart == 0 {
-				bodyStart = fn.addr
-			}
-			if fn.addr < 0 || fn.addr >= len(mod.code) || bodyStart >= len(mod.code) || bodyStart >= end {
+		for _, fn := range ranges {
+			if fn.addr < 0 || fn.addr >= len(mod.code) || fn.start >= len(mod.code) || fn.start >= fn.end {
 				continue
 			}
-			body := decompileRange(mod.code, bodyStart, end, 1)
+			state := newDecompileState()
+			if !isSyntheticFunction(fn.name) {
+				state.skip = nestedFunctionRanges(fn, ranges)
+			}
+			body := decompileRangeWithState(mod.code, fn.start, fn.end, 1, state)
 			chunks = append(chunks, "function "+fn.name+"("+strings.Join(fn.params, ", ")+")\n{\n"+strings.Join(body, "\n")+"\n}")
 		}
 		return strings.Join(chunks, "\n\n") + "\n"
@@ -466,8 +469,66 @@ func decompileModule(mod module) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
+func buildFunctionRanges(funcs []functionDef, code []instruction) []functionRange {
+	out := make([]functionRange, len(funcs))
+	nextConcrete := len(code)
+	for i := len(funcs) - 1; i >= 0; i-- {
+		start := funcs[i].bodyStart
+		if start == 0 {
+			start = funcs[i].addr
+		}
+		end := nextConcrete
+		if isSyntheticFunction(funcs[i].name) {
+			end = firstReturnEnd(code, start, nextConcrete)
+		} else {
+			nextConcrete = funcs[i].addr
+		}
+		out[i] = functionRange{functionDef: funcs[i], start: start, end: end}
+	}
+	return out
+}
+
+func firstReturnEnd(code []instruction, start, fallback int) int {
+	for pc := start; pc < fallback && pc < len(code); pc++ {
+		if code[pc].op == opRet {
+			return pc + 1
+		}
+	}
+	return fallback
+}
+
+func nestedFunctionRanges(parent functionRange, funcs []functionRange) []functionRange {
+	var out []functionRange
+	for _, fn := range funcs {
+		if fn.addr == parent.addr || !isSyntheticFunction(fn.name) {
+			continue
+		}
+		if fn.addr > parent.start && fn.end <= parent.end {
+			out = append(out, fn)
+		}
+	}
+	return out
+}
+
+func isSyntheticFunction(name string) bool {
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		name = name[dot+1:]
+	}
+	if !strings.HasPrefix(name, "function_") {
+		return false
+	}
+	parts := strings.Split(name, "_")
+	if len(parts) != 3 {
+		return false
+	}
+	_, errA := strconv.Atoi(parts[1])
+	_, errB := strconv.Atoi(parts[2])
+	return errA == nil && errB == nil
+}
+
 type decompileState struct {
 	registers map[int]expr
+	skip      []functionRange
 }
 
 func newDecompileState() *decompileState {
@@ -482,6 +543,10 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 	var lines []string
 	var stack []expr
 	for pc := start; pc < end; pc++ {
+		if skipEnd, ok := skipRangeEnd(state.skip, pc); ok {
+			pc = skipEnd - 1
+			continue
+		}
 		ins := code[pc]
 		switch ins.op {
 		case opNone:
@@ -516,7 +581,15 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 		case opParams:
 			stack = append(stack, expr{text: "params"})
 		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams, opFunctionStart, opLoopCounter, opShortCircuitEnd:
-		case opNew, opNewObject, opWithEnd:
+		case opNew, opWithEnd:
+		case opNewObject:
+			className := popExpr(&stack)
+			target := popExpr(&stack)
+			if target.text == "unknown_object" {
+				stack = append(stack, expr{text: "new " + unquoteText(className.text) + "()", kind: "object"})
+			} else {
+				stack = append(stack, target, className)
+			}
 		case opWith:
 			target := jumpTarget(ins)
 			if target > pc && target <= end && len(lines) > 0 && isConstructorLine(lines[len(lines)-1]) {
@@ -680,6 +753,9 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 			stack = append(stack, newMultiDimArrayExpr(&stack))
 		case opAssign:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			if isHiddenFunctionBinding(lhs, rhs) {
+				continue
+			}
 			rhs = normalizeAssignmentValue(lhs, rhs)
 			if isObjectNameExpr(lhs) && rhs.kind == "string" && strings.HasPrefix(unquoteText(rhs.text), "Gui") {
 				lines = append(lines, pad(indent)+"new "+unquoteText(rhs.text)+"("+lhs.text+");")
@@ -719,6 +795,7 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 			if dispatchLines, newPC, ok := recoverBackwardDispatch(code, pc, target, end, indent, state); ok {
 				lines = append(lines, dispatchLines...)
 				pc = newPC
+			} else if skipsEmbeddedFunction(state.skip, pc+1, target) {
 			} else if target < end {
 				lines = append(lines, pad(indent)+fmt.Sprintf("goto label_%d;", target))
 			}
@@ -753,6 +830,32 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 		}
 	}
 	return collapseNestedIfs(lines)
+}
+
+func skipRangeEnd(ranges []functionRange, pc int) (int, bool) {
+	for _, r := range ranges {
+		if pc == r.addr {
+			return r.end, true
+		}
+	}
+	return 0, false
+}
+
+func skipsEmbeddedFunction(ranges []functionRange, start, target int) bool {
+	for _, r := range ranges {
+		if r.addr == start && r.end == target {
+			return true
+		}
+	}
+	return false
+}
+
+func isHiddenFunctionBinding(lhs, rhs expr) bool {
+	lhsText := strings.TrimSpace(lhs.text)
+	if lhsText != "" && lhsText != "/* missing */" {
+		return false
+	}
+	return isSyntheticFunction(rhs.text)
 }
 
 func recoverForLoop(lines []string, body []string, condition string, pc int, indent int) ([]string, bool) {
@@ -817,7 +920,7 @@ func recoverBackwardDispatch(code []instruction, pc, target, end, indent int, st
 	if target <= pc || target >= end {
 		return nil, 0, false
 	}
-	cases, tail, ok := parseBackwardDispatchCases(code, pc, target, end)
+	cases, tail, ok := parseBackwardDispatchCases(code, pc, target, end, state)
 	if !ok || len(cases) == 0 {
 		return nil, 0, false
 	}
@@ -860,8 +963,8 @@ func recoverBackwardDispatch(code []instruction, pc, target, end, indent int, st
 	return lines, skipDispatchTail(code, tail, commonEnd, end), true
 }
 
-func parseBackwardDispatchCases(code []instruction, pc, target, end int) ([]dispatchCase, int, bool) {
-	selector, pos, ok := dispatchSelector(code, target)
+func parseBackwardDispatchCases(code []instruction, pc, target, end int, state *decompileState) ([]dispatchCase, int, bool) {
+	selector, pos, ok := dispatchSelector(code, target, state)
 	if !ok {
 		return nil, 0, false
 	}
@@ -895,7 +998,7 @@ func parseBackwardDispatchCases(code []instruction, pc, target, end int) ([]disp
 	return cases, pos, true
 }
 
-func dispatchSelector(code []instruction, target int) (string, int, bool) {
+func dispatchSelector(code []instruction, target int, state *decompileState) (string, int, bool) {
 	var stack []expr
 	for pos := target; pos < len(code); pos++ {
 		ins := code[pos]
@@ -927,7 +1030,14 @@ func dispatchSelector(code []instruction, target int) (string, int, bool) {
 		case opLevel:
 			stack = append(stack, expr{text: "level"})
 		case opGetRegister:
-			stack = append(stack, expr{text: fmt.Sprintf("reg%d", operandNumber(ins))})
+			id := operandNumber(ins)
+			if state != nil {
+				if item, ok := state.registers[id]; ok {
+					stack = append(stack, item)
+					break
+				}
+			}
+			stack = append(stack, expr{text: fmt.Sprintf("reg%d", id)})
 		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar:
 		case opAccessMember:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
