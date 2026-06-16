@@ -240,6 +240,7 @@ func isHex(r rune) bool {
 }
 
 func parseModule(data []byte) (module, error) {
+	data = bytecodePayload(data)
 	r := byteReader{data: data}
 	mod := module{}
 	for section := 0; section < 4 && r.left() > 0; section++ {
@@ -304,6 +305,39 @@ func parseModule(data []byte) (module, error) {
 	}
 	mod.discoverFunctionPrologues()
 	return mod, nil
+}
+
+func bytecodePayload(data []byte) []byte {
+	if validSectionStream(data) {
+		return data
+	}
+	for off := 1; off+8 <= len(data); off++ {
+		if binary.BigEndian.Uint32(data[off:]) == 1 && validSectionStream(data[off:]) {
+			return data[off:]
+		}
+	}
+	return data
+}
+
+func validSectionStream(data []byte) bool {
+	pos := 0
+	seenCode := false
+	for section := 0; section < 4 && pos < len(data); section++ {
+		if pos+8 > len(data) {
+			return false
+		}
+		sectionType := binary.BigEndian.Uint32(data[pos:])
+		length := int(binary.BigEndian.Uint32(data[pos+4:]))
+		pos += 8
+		if sectionType < 1 || sectionType > 4 || length < 0 || pos+length > len(data) {
+			return false
+		}
+		if sectionType == 4 {
+			seenCode = true
+		}
+		pos += length
+	}
+	return seenCode
 }
 
 func (m *module) discoverFunctionPrologues() {
