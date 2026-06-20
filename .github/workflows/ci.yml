@@ -41,5 +41,5 @@ jobs:
       - name: Build WASM
         shell: bash
         run: |
-          GOOS=js GOARCH=wasm go build -o examples/web/gbyte.wasm .
-          test -s examples/web/gbyte.wasm
+          GOOS=js GOARCH=wasm go build -o examples/web/gbf.wasm .
+          test -s examples/web/gbf.wasm

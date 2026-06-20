@@ -5,6 +5,8 @@ package main
 import "syscall/js"
 
 func main() {
+	js.Global().Set("GBFDecompileText", js.FuncOf(decompileTextJS))
+	js.Global().Set("GBFDecompileBytes", js.FuncOf(decompileBytesJS))
 	js.Global().Set("GByteDecompileText", js.FuncOf(decompileTextJS))
 	js.Global().Set("GByteDecompileBytes", js.FuncOf(decompileBytesJS))
 	select {}

@@ -170,8 +170,8 @@ func TestDecompilerSplitsNamedFunctions(t *testing.T) {
 }
 
 func TestDefaultOutputPathUsesInputFolderAndGs2Extension(t *testing.T) {
-	got := defaultOutputPath(`G:\Development\Go\GByte\weapon%045Adventure.gs2bc`)
-	want := `G:\Development\Go\GByte\weapon%045Adventure.gs2`
+	got := defaultOutputPath(`G:\Development\Go\gbf-go\weapon%045Adventure.gs2bc`)
+	want := `G:\Development\Go\gbf-go\weapon%045Adventure.gs2`
 	if got != want {
 		t.Fatalf("want %q, got %q", want, got)
 	}

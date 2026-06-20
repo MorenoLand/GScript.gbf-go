@@ -88,8 +88,8 @@ jobs:
           build_unix() {
             local goos="$1"
             local goarch="$2"
-            local name="gbyte-${version}-${goos}-${goarch}"
-            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}/gbyte" .
+            local name="gbf-go-${version}-${goos}-${goarch}"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}/gbf-go" .
             cp LICENSE "dist/${name}/"
             tar -C dist -czf "dist/${name}.tar.gz" "$name"
             rm -rf "dist/${name}"
@@ -97,8 +97,8 @@ jobs:
 
           build_windows() {
             local goarch="$1"
-            local name="gbyte-${version}-windows-${goarch}"
-            GOOS=windows GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}/gbyte.exe" .
+            local name="gbf-go-${version}-windows-${goarch}"
+            GOOS=windows GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}/gbf-go.exe" .
             cp LICENSE "dist/${name}/"
             (cd dist && zip -qr "${name}.zip" "$name")
             rm -rf "dist/${name}"
@@ -115,15 +115,15 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
-          mkdir -p dist/gbyte-web
-          GOOS=js GOARCH=wasm go build -trimpath -o dist/gbyte-web/gbyte.wasm .
+          mkdir -p dist/gbf-go-web
+          GOOS=js GOARCH=wasm go build -trimpath -o dist/gbf-go-web/gbf.wasm .
           wasm_exec="$(find "$(go env GOROOT)" -path "*/wasm_exec.js" -type f | head -n 1)"
           test -n "$wasm_exec"
-          cp "$wasm_exec" dist/gbyte-web/
-          cp examples/web/index.html dist/gbyte-web/
-          cp LICENSE dist/gbyte-web/
-          (cd dist && zip -qr "gbyte-${version}-web-wasm.zip" gbyte-web)
-          rm -rf dist/gbyte-web
+          cp "$wasm_exec" dist/gbf-go-web/
+          cp examples/web/index.html dist/gbf-go-web/
+          cp LICENSE dist/gbf-go-web/
+          (cd dist && zip -qr "gbf-go-${version}-web-wasm.zip" gbf-go-web)
+          rm -rf dist/gbf-go-web
 
       - name: Publish GitHub release
         env:

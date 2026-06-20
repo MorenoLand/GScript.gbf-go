@@ -1,8 +1,8 @@
-# GScript.GoByte
+# GScript.gbf-go
 
 Minimal GS2 bytecode decompiler written in Go.
 
-GoByte reads GScript `.gs2bc` bytecode, parses the function table, string
+gbf-go reads GScript `.gs2bc` bytecode, parses the function table, string
 table, and instruction stream, then emits readable GS2-like source. It is
 intentionally small: one decompiler core, a CLI entrypoint, and a WASM
 entrypoint for browser use.
@@ -41,13 +41,13 @@ cat bytecode.hex | go run .
 Build the browser example:
 
 ```sh
-GOOS=js GOARCH=wasm go build -o examples/web/gbyte.wasm .
+GOOS=js GOARCH=wasm go build -o examples/web/gbf.wasm .
 wasm_exec="$(find "$(go env GOROOT)" -path "*/wasm_exec.js" -type f | head -n 1)"
 cp "$wasm_exec" examples/web/
 ```
 
 The web example exposes the decompiler through Go's WASM runtime and lets you
-load a `.gs2bc` file or paste hex input. It expects `gbyte.wasm` and
+load a `.gs2bc` file or paste hex input. It expects `gbf.wasm` and
 `wasm_exec.js` beside `examples/web/index.html`.
 
 ## Development
@@ -62,7 +62,7 @@ go build .
 Build WASM directly:
 
 ```sh
-GOOS=js GOARCH=wasm go build -o examples/web/gbyte.wasm .
+GOOS=js GOARCH=wasm go build -o examples/web/gbf.wasm .
 ```
 
 ## License

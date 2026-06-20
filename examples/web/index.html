@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GoByte WASM Test</title>
+  <title>gbf-go WASM Test</title>
   <style>
     :root {
       color-scheme: dark;
@@ -112,7 +112,7 @@
 </head>
 <body>
   <header>
-    <h1>GoByte WASM Test</h1>
+    <h1>gbf-go WASM Test</h1>
   </header>
   <main>
     <div class="toolbar">
@@ -170,7 +170,7 @@ f001 16f0 0206 2017 16f0 0306 2017 16f0
     }
 
     textButton.addEventListener("click", () => {
-      showResult(globalThis.GByteDecompileText(hexInput.value));
+      showResult(globalThis.GBFDecompileText(hexInput.value));
     });
 
     clearButton.addEventListener("click", () => {
@@ -182,12 +182,12 @@ f001 16f0 0206 2017 16f0 0306 2017 16f0
       const file = fileInput.files && fileInput.files[0];
       if (!file) return;
       const bytes = new Uint8Array(await file.arrayBuffer());
-      showResult(globalThis.GByteDecompileBytes(bytes));
+      showResult(globalThis.GBFDecompileBytes(bytes));
     });
 
     async function boot() {
       const go = new Go();
-      const result = await WebAssembly.instantiateStreaming(fetch("gbyte.wasm"), go.importObject);
+      const result = await WebAssembly.instantiateStreaming(fetch("gbf.wasm"), go.importObject);
       go.run(result.instance);
       textButton.disabled = false;
       setStatus("Ready");
