@@ -115,6 +115,30 @@ func TestAnonymousGuiObjectDoesNotLeakUnknownObject(t *testing.T) {
 	}
 }
 
+func TestAndroidReferenceLowOpcodeRecovery(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "obj"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "name"}},
+		{addr: 2, op: opPushString, operand: &operand{str: "value", kind: "string"}},
+		{addr: 3, op: opAssignMember},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "out"}},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "a"}},
+		{addr: 6, op: opPushVariable, operand: &operand{str: "b"}},
+		{addr: 7, op: opBoolAnd},
+		{addr: 8, op: opPushVariable, operand: &operand{str: "c"}},
+		{addr: 9, op: opBoolOr},
+		{addr: 10, op: opPushString, operand: &operand{str: "x", kind: "string"}},
+		{addr: 11, op: opAppend},
+		{addr: 12, op: opAssign},
+	}, 0, 13, 0)
+
+	got := strings.Join(lines, "\n")
+	want := "obj.name = \"value\";\nout = a && b || c @ \"x\";"
+	if got != want {
+		t.Fatalf("android low opcode recovery:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestEmbeddedSyntheticFunctionRanges(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opPushVariable, operand: &operand{str: "parent"}},

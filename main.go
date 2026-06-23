@@ -55,12 +55,15 @@ const (
 	opEndParams           opcode = 0x33
 	opInc                 opcode = 0x34
 	opDec                 opcode = 0x35
+	opAssignMember        opcode = 0x36
 	opAdd                 opcode = 0x3c
 	opSubtract            opcode = 0x3d
 	opMultiply            opcode = 0x3e
 	opDivide              opcode = 0x3f
 	opModulo              opcode = 0x40
 	opPower               opcode = 0x41
+	opBoolAnd             opcode = 0x42
+	opBoolOr              opcode = 0x43
 	opLogicalNot          opcode = 0x44
 	opUnarySubtract       opcode = 0x45
 	opEqual               opcode = 0x46
@@ -109,6 +112,7 @@ const (
 	opObjTokenize         opcode = 0x76
 	opGetTranslation      opcode = 0x77
 	opObjPositions        opcode = 0x78
+	opAppend              opcode = 0x79
 	opObjSize             opcode = 0x82
 	opArrayAccess         opcode = 0x83
 	opAssignArray         opcode = 0x84
@@ -653,7 +657,10 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 		case opAccessMember:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
 			stack = append(stack, expr{text: memberBase(lhs.text) + "." + rhs.text})
-		case opAdd, opSubtract, opMultiply, opDivide, opModulo, opPower, opEqual, opNotEqual, opLessThan, opGreaterThan, opLE, opGE, opBitwiseOr, opBitwiseAnd, opBitwiseXor, opShiftLeft, opShiftRight, opIn, opJoin:
+		case opAssignMember:
+			rhs, prop, obj := popExpr(&stack), popExpr(&stack), popExpr(&stack)
+			lines = append(lines, pad(indent)+memberBase(obj.text)+"."+prop.text+" = "+rhs.text+";")
+		case opAdd, opSubtract, opMultiply, opDivide, opModulo, opPower, opBoolAnd, opBoolOr, opEqual, opNotEqual, opLessThan, opGreaterThan, opLE, opGE, opBitwiseOr, opBitwiseAnd, opBitwiseXor, opShiftLeft, opShiftRight, opIn, opJoin, opAppend:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
 			stack = append(stack, expr{text: lhs.text + " " + infix(ins.op) + " " + rhs.text})
 		case opInRange:
@@ -1411,6 +1418,10 @@ func infix(op opcode) string {
 		return "%"
 	case opPower:
 		return "^"
+	case opBoolAnd:
+		return "&&"
+	case opBoolOr:
+		return "||"
 	case opShortCircuitAnd:
 		return "&&"
 	case opShortCircuitOr:
@@ -1440,6 +1451,8 @@ func infix(op opcode) string {
 	case opIn:
 		return "in"
 	case opJoin:
+		return "@"
+	case opAppend:
 		return "@"
 	default:
 		return "?"
