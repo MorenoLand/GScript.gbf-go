@@ -540,8 +540,12 @@ func decompileRange(code []instruction, start, end, indent int) []string {
 }
 
 func decompileRangeWithState(code []instruction, start, end, indent int, state *decompileState) []string {
+	return decompileRangeWithStateAndStack(code, start, end, indent, state, nil)
+}
+
+func decompileRangeWithStateAndStack(code []instruction, start, end, indent int, state *decompileState, initialStack []expr) []string {
 	var lines []string
-	var stack []expr
+	stack := append([]expr(nil), initialStack...)
 	for pc := start; pc < end; pc++ {
 		if skipEnd, ok := skipRangeEnd(state.skip, pc); ok {
 			pc = skipEnd - 1
@@ -555,7 +559,7 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 		case opPushString:
 			stack = append(stack, expr{text: quote(ins.operand.str), kind: "string"})
 		case opPushVariable:
-			stack = append(stack, expr{text: ins.operand.str})
+			stack = append(stack, expr{text: variableName(ins.operand.str)})
 		case opPushNumber:
 			stack = append(stack, expr{text: numberText(ins.operand)})
 		case opPushTrue:
@@ -585,8 +589,13 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 		case opNewObject:
 			className := popExpr(&stack)
 			target := popExpr(&stack)
-			if target.text == "unknown_object" {
-				stack = append(stack, expr{text: "new " + unquoteText(className.text) + "()", kind: "object"})
+			if isUnknownObjectPlaceholder(target.text) {
+				obj := expr{text: "new " + unquoteText(className.text) + "()", kind: "object"}
+				if len(stack) == 0 {
+					stack = append(stack, expr{text: "temp.object"}, obj)
+				} else {
+					stack = append(stack, obj)
+				}
 			} else {
 				className.kind = "class"
 				stack = append(stack, target, className)
@@ -600,7 +609,14 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 				pc = target - 1
 			}
 		case opShortCircuitOr, opShortCircuitAnd:
+			if len(stack) < 2 {
+				continue
+			}
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			if lhs.marker {
+				stack = append(stack, lhs, rhs)
+				continue
+			}
 			stack = append(stack, expr{text: lhs.text + " " + infix(ins.op) + " " + rhs.text})
 		case opEndArray:
 			args := collectArgs(&stack)
@@ -754,6 +770,9 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 			stack = append(stack, newMultiDimArrayExpr(&stack))
 		case opAssign:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			if recoveredLHS, recoveredRHS, ok := recoverFormatAssignment(lhs, rhs); ok {
+				lhs, rhs = recoveredLHS, recoveredRHS
+			}
 			if isHiddenFunctionBinding(lhs, rhs) {
 				continue
 			}
@@ -778,7 +797,8 @@ func decompileRangeWithState(code []instruction, start, end, indent int, state *
 				if ins.op == opJeq {
 					condition = "!(" + condition + ")"
 				}
-				body := decompileRangeWithState(code, pc+1, target, indent+1, state)
+				body := decompileRangeWithStateAndStack(code, pc+1, target, indent+1, state, stack)
+				body = trimAfterReturn(body)
 				if forLoop, ok := recoverForLoop(lines, body, condition, pc, indent); ok {
 					lines = forLoop
 				} else {
@@ -1172,6 +1192,16 @@ func trimForEachBookkeeping(body []string) []string {
 	return out
 }
 
+func trimAfterReturn(body []string) []string {
+	for i, line := range body {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "return") && strings.HasSuffix(trimmed, ";") {
+			return body[:i+1]
+		}
+	}
+	return body
+}
+
 func isGotoLine(line string) bool {
 	if !strings.HasPrefix(line, "goto label_") || !strings.HasSuffix(line, ";") {
 		return false
@@ -1460,6 +1490,17 @@ func quote(s string) string {
 	return strconv.Quote(s)
 }
 
+func variableName(s string) string {
+	if s == "unknown_object" {
+		return "temp.object"
+	}
+	return s
+}
+
+func isUnknownObjectPlaceholder(s string) bool {
+	return s == "unknown_object" || s == "temp.object"
+}
+
 func unquoteText(s string) string {
 	if unquoted, err := strconv.Unquote(s); err == nil {
 		return unquoted
@@ -1469,7 +1510,101 @@ func unquoteText(s string) string {
 
 func isConstructorLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
-	return strings.HasPrefix(trimmed, "new ") && strings.HasSuffix(trimmed, ");")
+	return strings.HasPrefix(trimmed, "new ") && strings.HasSuffix(trimmed, ");") || strings.Contains(trimmed, " = new ") && strings.HasSuffix(trimmed, ");")
+}
+
+func recoverFormatAssignment(lhs, rhs expr) (expr, expr, bool) {
+	if lhs.text != "/* missing */" || !strings.HasPrefix(rhs.text, "format(") || !strings.HasSuffix(rhs.text, ")") {
+		return lhs, rhs, false
+	}
+	args := splitTopLevelArgs(strings.TrimSuffix(strings.TrimPrefix(rhs.text, "format("), ")"))
+	if len(args) < 2 {
+		return lhs, rhs, false
+	}
+	if recoveredLHS, recoveredArg, ok := splitFormatAssignmentArg(args[0]); ok {
+		args[0] = recoveredArg
+		return expr{text: recoveredLHS}, expr{text: "format(" + strings.Join(args, ", ") + ")"}, true
+	}
+	args[0] = trimLeadingShortCircuit(args[0])
+	if !isAssignableText(args[0]) {
+		return lhs, rhs, false
+	}
+	return expr{text: args[0]}, expr{text: "format(" + strings.Join(args[1:], ", ") + ")"}, true
+}
+
+func splitFormatAssignmentArg(s string) (string, string, bool) {
+	for _, op := range []string{" || ", " && "} {
+		if idx := strings.Index(s, op); idx > 0 {
+			left := strings.TrimSpace(s[:idx])
+			right := strings.TrimSpace(s[idx+len(op):])
+			if isAssignableText(left) && right != "" {
+				return left, right, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func trimLeadingShortCircuit(s string) string {
+	s = strings.TrimSpace(s)
+	for _, op := range []string{"|| ", "&& "} {
+		if strings.HasPrefix(s, op) {
+			return strings.TrimSpace(strings.TrimPrefix(s, op))
+		}
+	}
+	return s
+}
+
+func splitTopLevelArgs(s string) []string {
+	var args []string
+	var current strings.Builder
+	depth := 0
+	quoteChar := rune(0)
+	escaped := false
+	for _, r := range s {
+		if quoteChar != 0 {
+			current.WriteRune(r)
+			if escaped {
+				escaped = false
+			} else if r == '\\' {
+				escaped = true
+			} else if r == quoteChar {
+				quoteChar = 0
+			}
+			continue
+		}
+		switch r {
+		case '"', '\'':
+			quoteChar = r
+			current.WriteRune(r)
+		case '(', '[', '{':
+			depth++
+			current.WriteRune(r)
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+			current.WriteRune(r)
+		case ',':
+			if depth == 0 {
+				args = append(args, strings.TrimSpace(current.String()))
+				current.Reset()
+			} else {
+				current.WriteRune(r)
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	args = append(args, strings.TrimSpace(current.String()))
+	return args
+}
+
+func isAssignableText(s string) bool {
+	if s == "" || strings.Contains(s, "/* missing */") || strings.HasPrefix(s, "\"") {
+		return false
+	}
+	return !strings.ContainsAny(s, "+-*/<>=!&|")
 }
 
 func isObjectNameExpr(value expr) bool {

@@ -1,11 +1,10 @@
 # GScript.gbf-go
 
-Minimal GS2 bytecode decompiler written in Go.
+GS2 bytecode decompiler written in Go.
 
 gbf-go reads GScript `.gs2bc` bytecode, parses the function table, string
-table, and instruction stream, then emits readable GS2-like source. It is
-intentionally small: one decompiler core, a CLI entrypoint, and a WASM
-entrypoint for browser use.
+table, and instruction stream, then emits readable GS2-like source. It includes
+a decompiler core, a CLI entrypoint, and a WASM entrypoint for browser use.
 
 ## Features
 

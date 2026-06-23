@@ -67,6 +67,54 @@ func TestNewObjectKeepsNamedConstructorsAndAnonymousObjects(t *testing.T) {
 	}
 }
 
+func TestRecoverFormatAssignmentTarget(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushArray},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "ShopGlobal_ItemDescription"}},
+		{addr: 2, op: opPushVariable, operand: &operand{str: "text"}},
+		{addr: 3, op: opAccessMember},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "item"}},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "timeleft"}},
+		{addr: 6, op: opAccessMember},
+		{addr: 7, op: opPushNumber, operand: &operand{number: 0, kind: "number"}},
+		{addr: 8, op: opLE},
+		{addr: 9, op: opShortCircuitOr},
+		{addr: 10, op: opPushString, operand: &operand{str: "%s", kind: "string"}},
+		{addr: 11, op: opFormat},
+		{addr: 12, op: opAssign},
+	}, 0, 13, 0)
+
+	got := strings.Join(lines, "\n")
+	want := `ShopGlobal_ItemDescription.text = format(item.timeleft <= 0, "%s");`
+	if got != want {
+		t.Fatalf("format assignment:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestAnonymousGuiObjectDoesNotLeakUnknownObject(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "unknown_object"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "GuiBitmapCtrl", kind: "string"}},
+		{addr: 2, op: opNewObject},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opConvertToObject},
+		{addr: 5, op: opWith, operand: &operand{number: 9, kind: "number"}},
+		{addr: 6, op: opPushVariable, operand: &operand{str: "bitmap"}},
+		{addr: 7, op: opPushString, operand: &operand{str: "icon.png", kind: "string"}},
+		{addr: 8, op: opAssign},
+		{addr: 9, op: opPushArray},
+		{addr: 10, op: opPushVariable, operand: &operand{str: "unknown_object"}},
+		{addr: 11, op: opPushVariable, operand: &operand{str: "addcontrol"}},
+		{addr: 12, op: opCall},
+		{addr: 13, op: opPop},
+	}, 0, 14, 0)
+
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "unknown_object") || !strings.Contains(got, "temp.object") {
+		t.Fatalf("anonymous gui object leaked placeholder:\n%s", got)
+	}
+}
+
 func TestEmbeddedSyntheticFunctionRanges(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opPushVariable, operand: &operand{str: "parent"}},
