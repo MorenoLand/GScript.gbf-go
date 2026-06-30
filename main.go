@@ -638,6 +638,12 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 				lines = append(lines, decompileRangeWithState(code, pc+1, target, indent+1, state)...)
 				lines = append(lines, pad(indent)+"}")
 				pc = target - 1
+			} else if target > pc && target <= end {
+				targetExpr := popExpr(&stack)
+				lines = append(lines, pad(indent)+"with ("+targetExpr.text+") {")
+				lines = append(lines, decompileRangeWithState(code, pc+1, target, indent+1, state)...)
+				lines = append(lines, pad(indent)+"}")
+				pc = target - 1
 			}
 		case opShortCircuitOr, opShortCircuitAnd:
 			if len(stack) < 2 {
@@ -683,10 +689,10 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			stack = append(stack, item)
 		case opAccessMember:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
-			stack = append(stack, expr{text: memberBase(lhs.text) + "." + rhs.text})
+			stack = append(stack, expr{text: memberBase(lhs.text) + "." + memberName(rhs.text)})
 		case opAssignMember:
 			rhs, prop, obj := popExpr(&stack), popExpr(&stack), popExpr(&stack)
-			lines = append(lines, pad(indent)+memberBase(obj.text)+"."+prop.text+" = "+rhs.text+";")
+			lines = append(lines, pad(indent)+memberBase(obj.text)+"."+memberName(prop.text)+" = "+rhs.text+";")
 		case opAdd, opSubtract, opMultiply, opDivide, opModulo, opPower, opBoolAnd, opBoolOr, opEqual, opNotEqual, opLessThan, opGreaterThan, opLE, opGE, opBitwiseOr, opBitwiseAnd, opBitwiseXor, opShiftLeft, opShiftRight, opIn, opJoin, opAppend:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
 			stack = append(stack, expr{text: lhs.text + " " + infix(ins.op) + " " + rhs.text})
@@ -983,9 +989,20 @@ func recoverForLoop(lines []string, body []string, condition string, pc int, ind
 	init := strings.TrimSuffix(initLine, ";")
 	result := append([]string(nil), lines[:len(lines)-1]...)
 	result = append(result, pad(indent)+"for ("+init+"; "+condition+"; "+inc+") {")
-	result = append(result, workBody[:len(workBody)-1]...)
+	result = append(result, replaceGotoTarget(workBody[:len(workBody)-1], label, "continue;")...)
 	result = append(result, pad(indent)+"}")
 	return result, true
+}
+
+func replaceGotoTarget(lines []string, target int, replacement string) []string {
+	out := append([]string(nil), lines...)
+	want := fmt.Sprintf("goto label_%d;", target)
+	for i, line := range out {
+		if strings.TrimSpace(line) == want {
+			out[i] = strings.Repeat(" ", parseLineIndent(line)) + replacement
+		}
+	}
+	return out
 }
 
 func parseLoopIncrement(line string) (string, string, bool) {
@@ -1438,7 +1455,7 @@ func dispatchSelector(code []instruction, target int, state *decompileState) (st
 			stack = append(stack, expr{text: buildCall(&stack), kind: "call"})
 		case opAccessMember:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
-			stack = append(stack, expr{text: memberBase(lhs.text) + "." + rhs.text})
+			stack = append(stack, expr{text: memberBase(lhs.text) + "." + memberName(rhs.text)})
 		case opArrayAccess:
 			index, arr := popExpr(&stack), popExpr(&stack)
 			stack = append(stack, expr{text: arr.text + "[" + index.text + "]"})
@@ -2098,6 +2115,13 @@ func infix(op opcode) string {
 }
 
 func memberBase(s string) string {
+	if strings.Contains(s, " @ ") && !(strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")")) {
+		return "(" + s + ")"
+	}
+	return s
+}
+
+func memberName(s string) string {
 	if strings.Contains(s, " @ ") && !(strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")")) {
 		return "(" + s + ")"
 	}

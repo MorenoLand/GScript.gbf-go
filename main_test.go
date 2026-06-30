@@ -512,6 +512,23 @@ func TestRecoverBackwardDispatchSkipsLeadingDefaultCase(t *testing.T) {
 	}
 }
 
+func TestRecoverForLoopConvertsInternalBackEdgeToContinue(t *testing.T) {
+	lines := []string{"i = 0;"}
+	body := []string{
+		"  if (skip) {",
+		"    goto label_4;",
+		"  }",
+		"  use(i);",
+		"  i += 1;",
+		"  goto label_4;",
+	}
+	gotLines, ok := recoverForLoop(lines, body, "i < count", 5, 0)
+	got := strings.Join(gotLines, "\n")
+	if !ok || strings.Contains(got, "goto label_") || !strings.Contains(got, "continue;") {
+		t.Fatalf("for-loop continue not recovered (%v):\n%s", ok, got)
+	}
+}
+
 func TestJmpToRangeEndStopsBodyLeak(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opJmp, operand: &operand{number: 4, kind: "number"}},
@@ -526,6 +543,43 @@ func TestJmpToRangeEndStopsBodyLeak(t *testing.T) {
 	got := strings.Join(lines, "\n")
 	if strings.Contains(got, "leaked") || strings.Contains(got, "goto label_") {
 		t.Fatalf("range-end jump leaked body:\n%s", got)
+	}
+}
+
+func TestDynamicMemberNameIsParenthesized(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opThis},
+		{addr: 1, op: opPushString, operand: &operand{str: "game_board", kind: "string"}},
+		{addr: 2, op: opPushVariable, operand: &operand{str: "board"}},
+		{addr: 3, op: opJoin},
+		{addr: 4, op: opPushString, operand: &operand{str: "_load", kind: "string"}},
+		{addr: 5, op: opJoin},
+		{addr: 6, op: opPushNumber, operand: &operand{number: 1, kind: "number"}},
+		{addr: 7, op: opAssignMember},
+	}
+	got := strings.Join(decompileRange(code, 0, len(code), 0), "\n")
+	if !strings.Contains(got, `this.("game_board" @ board @ "_load") = 1;`) {
+		t.Fatalf("dynamic member not parenthesized:\n%s", got)
+	}
+}
+
+func TestRecoverGenericWithBlock(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opPushNumber, operand: &operand{number: 200, kind: "number"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "findimg"}},
+		{addr: 2, op: opCall},
+		{addr: 3, op: opWith, operand: &operand{number: 11, kind: "number"}},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "emitter"}},
+		{addr: 5, op: opWith, operand: &operand{number: 10, kind: "number"}},
+		{addr: 6, op: opPushVariable, operand: &operand{str: "delaymin"}},
+		{addr: 7, op: opPushNumber, operand: &operand{number: 1, kind: "number"}},
+		{addr: 8, op: opAssign},
+		{addr: 9, op: opWithEnd},
+		{addr: 10, op: opWithEnd},
+	}
+	got := strings.Join(decompileRange(code, 0, len(code), 0), "\n")
+	if !strings.Contains(got, "with (findimg(200)) {") || !strings.Contains(got, "with (emitter) {") || !strings.Contains(got, "delaymin = 1;") {
+		t.Fatalf("generic with block not recovered:\n%s", got)
 	}
 }
 
