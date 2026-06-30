@@ -282,6 +282,51 @@ func TestRecoverForLoopWithAssignmentIncrement(t *testing.T) {
 	}
 }
 
+func TestRecoverWhileLoopWithSleep(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushTrue},
+		{addr: 1, op: opJne, operand: &operand{number: 8, kind: "number"}},
+		{addr: 2, op: opPushVariable, operand: &operand{str: "done"}},
+		{addr: 3, op: opLogicalNot},
+		{addr: 4, op: opJne, operand: &operand{number: 5, kind: "number"}},
+		{addr: 5, op: opPushNumber, operand: &operand{float: "0.05", kind: "float"}},
+		{addr: 6, op: opSleep},
+		{addr: 7, op: opJmp, operand: &operand{number: 0, kind: "number"}},
+	}, 0, 8, 0)
+	got := strings.Join(lines, "\n")
+	want := "while (true) {\n  if (!done) {\n    break;\n  }\n  sleep(0.05);\n}"
+	if got != want {
+		t.Fatalf("while sleep loop:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecoverWhileLoopRejectsOuterBackJump(t *testing.T) {
+	_, ok := recoverWhileLoop([]string{
+		"  sleep(0.05);",
+		"  goto label_10;",
+	}, "waiting", 30, 0)
+	if ok {
+		t.Fatalf("outer backjump was recovered as local while")
+	}
+}
+
+func TestRecoverSleepLoopBlocks(t *testing.T) {
+	lines := recoverSleepLoopBlocks([]string{
+		"  if (true) {",
+		"    temp.waiting = false;",
+		"    if (!temp.waiting) {",
+		"      sleep(0.05);",
+		"      goto label_156;",
+		"    }",
+		"  }",
+	})
+	got := strings.Join(lines, "\n")
+	want := "  while (true) {\n    temp.waiting = false;\n    if (!temp.waiting) {\n      break;\n    }\n    sleep(0.05);\n  }"
+	if got != want {
+		t.Fatalf("sleep loop block:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestRecoverForwardDispatch(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opJmp, operand: &operand{number: 5, kind: "number"}},
