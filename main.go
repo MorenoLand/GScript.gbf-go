@@ -1964,7 +1964,14 @@ func unindentOnce(lines []string) []string {
 func buildCall(stack *[]expr) string {
 	callee := popExpr(stack).text
 	args := collectCallArgs(stack)
-	return callee + "(" + strings.Join(args, ", ") + ")"
+	return callTarget(callee) + "(" + strings.Join(args, ", ") + ")"
+}
+
+func callTarget(s string) string {
+	if strings.Contains(s, " @ ") && !(strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")")) {
+		return "(" + s + ")"
+	}
+	return s
 }
 
 func collectCallArgs(stack *[]expr) []string {

@@ -592,6 +592,22 @@ func TestDynamicMemberNameIsParenthesized(t *testing.T) {
 	}
 }
 
+func TestDynamicCallTargetIsParenthesized(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opPushArray},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "value"}},
+		{addr: 2, op: opPushString, operand: &operand{str: "faceezSet", kind: "string"}},
+		{addr: 3, op: opPushVariable, operand: &operand{str: "part"}},
+		{addr: 4, op: opJoin},
+		{addr: 5, op: opCall},
+		{addr: 6, op: opPop},
+	}
+	got := strings.Join(decompileRange(code, 0, len(code), 0), "\n")
+	if !strings.Contains(got, `("faceezSet" @ part)(value);`) {
+		t.Fatalf("dynamic call target not parenthesized:\n%s", got)
+	}
+}
+
 func TestRecoverGenericWithBlock(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opPushNumber, operand: &operand{number: 200, kind: "number"}},
