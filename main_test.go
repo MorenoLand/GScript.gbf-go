@@ -433,6 +433,69 @@ func TestRecoverForwardDispatchKeepsLoopBodyWhole(t *testing.T) {
 	}
 }
 
+func TestDispatchCommonEndUsesFirstCaseExit(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 10, kind: "number"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "a"}},
+		{addr: 2, op: opJmp, operand: &operand{number: 20, kind: "number"}},
+		{addr: 3, op: opJmp, operand: &operand{number: 30, kind: "number"}},
+		{addr: 10, op: opPushVariable, operand: &operand{str: "mode"}},
+		{addr: 11, op: opCopy},
+		{addr: 12, op: opPushString, operand: &operand{str: "a", kind: "string"}},
+		{addr: 13, op: opEqual},
+		{addr: 14, op: opJeq, operand: &operand{number: 1, kind: "number"}},
+	}
+	commonEnd, ok := dispatchCommonEnd(code, []dispatchCase{{condition: `mode == "a"`, target: 1}}, 10)
+	if !ok || commonEnd != 20 {
+		t.Fatalf("commonEnd = %d, %v; want 20, true", commonEnd, ok)
+	}
+}
+
+func TestRecoverTailDispatchAtSelector(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "result"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "a", kind: "string"}},
+		{addr: 2, op: opAssign},
+		{addr: 3, op: opJmp, operand: &operand{number: 17, kind: "number"}},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "result"}},
+		{addr: 5, op: opPushString, operand: &operand{str: "b", kind: "string"}},
+		{addr: 6, op: opAssign},
+		{addr: 7, op: opJmp, operand: &operand{number: 17, kind: "number"}},
+		{addr: 8, op: opPushVariable, operand: &operand{str: "mode"}},
+		{addr: 9, op: opCopy},
+		{addr: 10, op: opPushString, operand: &operand{str: "a", kind: "string"}},
+		{addr: 11, op: opEqual},
+		{addr: 12, op: opJeq, operand: &operand{number: 0, kind: "number"}},
+		{addr: 13, op: opCopy},
+		{addr: 14, op: opPushString, operand: &operand{str: "b", kind: "string"}},
+		{addr: 15, op: opEqual},
+		{addr: 16, op: opJeq, operand: &operand{number: 4, kind: "number"}},
+		{addr: 17, op: opPop},
+	}
+	lines := decompileRange(code, 8, len(code), 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, `if (mode == "a")`) || !strings.Contains(got, `else if (mode == "b")`) {
+		t.Fatalf("tail dispatch not recovered:\n%s", got)
+	}
+}
+
+func TestJmpToRangeEndStopsBodyLeak(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 4, kind: "number"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "leaked"}},
+		{addr: 2, op: opPushString, operand: &operand{str: "bad", kind: "string"}},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "kept"}},
+		{addr: 5, op: opPushString, operand: &operand{str: "ok", kind: "string"}},
+		{addr: 6, op: opAssign},
+	}
+	lines := decompileRange(code, 0, 4, 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "leaked") || strings.Contains(got, "goto label_") {
+		t.Fatalf("range-end jump leaked body:\n%s", got)
+	}
+}
+
 func TestDispatchSelectorUsesRecoveredRegisters(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opGetRegister, operand: &operand{number: 1, kind: "number"}},

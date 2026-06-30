@@ -577,6 +577,11 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			pc = skipEnd - 1
 			continue
 		}
+		if dispatchLines, newPC, ok := recoverTailDispatch(code, pc, end, indent, state); ok {
+			lines = append(lines, dispatchLines...)
+			pc = newPC
+			continue
+		}
 		ins := code[pc]
 		switch ins.op {
 		case opNone:
@@ -869,6 +874,8 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 				lines = append(lines, dispatchLines...)
 				pc = newPC
 			} else if skipsEmbeddedFunction(state.skip, pc+1, target) {
+			} else if target == end {
+				pc = end - 1
 			} else if target < end {
 				lines = append(lines, pad(indent)+fmt.Sprintf("goto label_%d;", target))
 			}
@@ -1181,6 +1188,7 @@ func forwardDispatchCommonEnd(code []instruction, targets []int, dispatchStart i
 		for pos := target; pos < limit; pos++ {
 			if code[pos].op == opJmp && jumpTarget(code[pos]) >= dispatchStart {
 				endJump = jumpTarget(code[pos])
+				break
 			}
 		}
 		if endJump < 0 {
@@ -1252,6 +1260,90 @@ func recoverBackwardDispatch(code []instruction, pc, target, end, indent int, st
 		lines = append(lines, pad(indent)+"}")
 	}
 	return lines, skipDispatchTail(code, tail, commonEnd, end), true
+}
+
+func recoverTailDispatch(code []instruction, pc, end, indent int, state *decompileState) ([]string, int, bool) {
+	cases, tail, ok := parseTailDispatchCases(code, pc, end, state)
+	if !ok || len(cases) == 0 {
+		return nil, 0, false
+	}
+	commonEnd, ok := dispatchCommonEnd(code, cases, pc)
+	if !ok || commonEnd < pc || commonEnd > end {
+		return nil, 0, false
+	}
+	targets := make([]int, 0, len(cases))
+	seenTargets := map[int]bool{}
+	for _, c := range cases {
+		if seenTargets[c.target] {
+			continue
+		}
+		seenTargets[c.target] = true
+		targets = append(targets, c.target)
+	}
+	sort.Ints(targets)
+	targetToNext := map[int]int{}
+	for i, t := range targets {
+		next := pc
+		if i+1 < len(targets) {
+			next = targets[i+1]
+		}
+		targetToNext[t] = next
+	}
+	var lines []string
+	for i, c := range cases {
+		bodyEnd := targetToNext[c.target]
+		if bodyEnd <= c.target {
+			return nil, 0, false
+		}
+		body := removeDuplicateGotos(decompileRangeWithState(code, c.target, bodyEnd, indent+1, state))
+		body = trimTrailingGoto(body, commonEnd)
+		if i == 0 {
+			lines = append(lines, pad(indent)+"if ("+c.condition+") {")
+		} else {
+			lines = append(lines, pad(indent)+"else if ("+c.condition+") {")
+		}
+		lines = append(lines, body...)
+		lines = append(lines, pad(indent)+"}")
+	}
+	return lines, skipDispatchTail(code, tail, commonEnd, end), true
+}
+
+func parseTailDispatchCases(code []instruction, pc, end int, state *decompileState) ([]dispatchCase, int, bool) {
+	selector, pos, ok := dispatchSelector(code, pc, state)
+	if !ok {
+		return nil, 0, false
+	}
+	var cases []dispatchCase
+	for pos+4 < end {
+		if code[pos].op != opCopy || code[pos+2].op != opEqual {
+			break
+		}
+		lit, ok := dispatchLiteral(code[pos+1])
+		if !ok {
+			break
+		}
+		jump := code[pos+3]
+		if jump.op != opJeq && jump.op != opJne {
+			break
+		}
+		caseTarget := jumpTarget(jump)
+		if caseTarget < 0 || caseTarget >= pc {
+			break
+		}
+		condition := selector + " == " + lit
+		if jump.op == opJne {
+			condition = selector + " != " + lit
+		}
+		cases = append(cases, dispatchCase{condition: condition, target: caseTarget})
+		pos += 4
+	}
+	if len(cases) == 0 {
+		return nil, 0, false
+	}
+	if pos < end && code[pos].op == opPop {
+		pos++
+	}
+	return cases, pos, true
 }
 
 func parseBackwardDispatchCases(code []instruction, pc, target, end int, state *decompileState) ([]dispatchCase, int, bool) {
@@ -1366,6 +1458,7 @@ func dispatchCommonEnd(code []instruction, cases []dispatchCase, dispatchStart i
 		for i := c.target; i < limit; i++ {
 			if code[i].op == opJmp && jumpTarget(code[i]) >= dispatchStart {
 				endJump = jumpTarget(code[i])
+				break
 			}
 		}
 		if endJump < 0 {
