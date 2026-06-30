@@ -470,7 +470,6 @@ func decompileModule(mod module) string {
 			body = recoverBareConstructorBlocks(body)
 			body = removeRepeatedAssignmentRuns(body)
 			body = recoverForwardGotoGuards(body)
-			body = removeResidualGotos(body)
 			chunks = append(chunks, functionSignature(fn.name, fn.params)+" {\n"+strings.Join(body, "\n")+"\n}")
 		}
 		return strings.Join(chunks, "\n\n") + "\n"
@@ -481,7 +480,6 @@ func decompileModule(mod module) string {
 	lines = recoverBareConstructorBlocks(lines)
 	lines = removeRepeatedAssignmentRuns(lines)
 	lines = recoverForwardGotoGuards(lines)
-	lines = removeResidualGotos(lines)
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -1661,23 +1659,6 @@ func isSimpleStatementLine(line string, indent int) bool {
 	}
 	trimmed := strings.TrimSpace(line)
 	return strings.HasSuffix(trimmed, ";") && !strings.HasPrefix(trimmed, "goto label_") && !strings.HasPrefix(trimmed, "if ") && !strings.HasPrefix(trimmed, "for ") && !strings.HasPrefix(trimmed, "return")
-}
-
-func removeResidualGotos(lines []string) []string {
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if isGotoLine(trimmed) || isGotoIfLine(trimmed) {
-			continue
-		}
-		out = append(out, line)
-	}
-	return out
-}
-
-func isGotoIfLine(line string) bool {
-	_, _, _, ok := parseGotoIfLine(line)
-	return ok
 }
 
 func collapseNestedIfs(lines []string) []string {

@@ -264,19 +264,6 @@ func TestRecoverForwardGotoGuards(t *testing.T) {
 	}
 }
 
-func TestRemoveResidualGotos(t *testing.T) {
-	lines := removeResidualGotos([]string{
-		`  goto label_55;`,
-		`  if (x > 0) goto label_99;`,
-		`  scheduleevent(0.5, "gotoenterchat");`,
-	})
-	got := strings.Join(lines, "\n")
-	want := `  scheduleevent(0.5, "gotoenterchat");`
-	if got != want {
-		t.Fatalf("residual goto cleanup:\n%s\nwant:\n%s", got, want)
-	}
-}
-
 func TestRecoverForLoopWithAssignmentIncrement(t *testing.T) {
 	lines, ok := recoverForLoop(
 		[]string{"temp.i = 90;"},
