@@ -91,6 +91,25 @@ func TestRecoverFormatAssignmentTarget(t *testing.T) {
 	}
 }
 
+func TestRecoverNewMultiDimArrayAssignmentTarget(t *testing.T) {
+	for _, tc := range []struct {
+		rhs  string
+		want string
+	}{
+		{`new [this.board][new [this.boardwidth]][this.boardheight]`, `this.board = new [this.boardwidth][this.boardheight];`},
+		{`new [new [this.fieldcorners][new [this.boardwidth + 1]][this.boardwidth + 1]][2]`, `this.fieldcorners = new [this.boardwidth + 1][this.boardwidth + 1][2];`},
+	} {
+		lhs, rhs, ok := recoverNewMultiDimAssignment(expr{text: "/* missing */"}, expr{text: tc.rhs})
+		if !ok {
+			t.Fatalf("did not recover %s", tc.rhs)
+		}
+		got := lhs.text + " = " + rhs.text + ";"
+		if got != tc.want {
+			t.Fatalf("multidim assignment:\n%s\nwant:\n%s", got, tc.want)
+		}
+	}
+}
+
 func TestAnonymousGuiObjectDoesNotLeakUnknownObject(t *testing.T) {
 	lines := decompileRange([]instruction{
 		{addr: 0, op: opPushVariable, operand: &operand{str: "unknown_object"}},
@@ -166,6 +185,166 @@ func TestEmbeddedSyntheticFunctionRanges(t *testing.T) {
 	}
 }
 
+func TestFunctionSignatureMovesVisibilityBeforeFunction(t *testing.T) {
+	got := functionSignature("public.onActionClientSide", []string{"dataname", "dataval"})
+	want := "public function onActionClientSide(dataname, dataval)"
+	if got != want {
+		t.Fatalf("signature = %q, want %q", got, want)
+	}
+}
+
+func TestRecoverProfileCloneBlocks(t *testing.T) {
+	lines := recoverProfileCloneBlocks([]string{
+		`    "Game_ABCBrick_BigTextProfile" = "Game_ABCBrick_BackProfile";`,
+		`    fontcolor = {0, 0, 0};`,
+		`    fontsize = 24;`,
+		`    addcontrol("Game_ABCBrick_BigTextProfile");`,
+	})
+	got := strings.Join(lines, "\n")
+	want := "    new GuiControlProfile(\"Game_ABCBrick_BigTextProfile\") {\n        fontcolor = {0, 0, 0};\n        fontsize = 24;\n    }\n    addcontrol(\"Game_ABCBrick_BigTextProfile\");"
+	if got != want {
+		t.Fatalf("profile clone block:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRemoveDuplicateGotos(t *testing.T) {
+	lines := removeDuplicateGotos([]string{
+		"    goto label_331;",
+		"    goto label_331;",
+		"    if (x) goto label_331;",
+		"    if (x) goto label_331;",
+	})
+	got := strings.Join(lines, "\n")
+	want := "    goto label_331;\n    if (x) goto label_331;\n    if (x) goto label_331;"
+	if got != want {
+		t.Fatalf("duplicate goto cleanup:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecoverForLoopWithAssignmentIncrement(t *testing.T) {
+	lines, ok := recoverForLoop(
+		[]string{"temp.i = 90;"},
+		[]string{"    addcontrol(temp.i);", "    temp.i = temp.i + 30;", "    goto label_10;"},
+		"temp.i <= 1200",
+		20,
+		0,
+	)
+	if !ok {
+		t.Fatalf("loop was not recovered")
+	}
+	got := strings.Join(lines, "\n")
+	want := "for (temp.i = 90; temp.i <= 1200; temp.i += 30) {\n    addcontrol(temp.i);\n}"
+	if got != want {
+		t.Fatalf("assignment increment loop:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecoverForwardDispatch(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 5, kind: "number"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "a", kind: "string"}},
+		{addr: 2, op: opRet},
+		{addr: 3, op: opPushString, operand: &operand{str: "b", kind: "string"}},
+		{addr: 4, op: opRet},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "mode"}},
+		{addr: 6, op: opCopy},
+		{addr: 7, op: opPushString, operand: &operand{str: "one", kind: "string"}},
+		{addr: 8, op: opEqual},
+		{addr: 9, op: opJeq, operand: &operand{number: 1, kind: "number"}},
+		{addr: 10, op: opJmp, operand: &operand{number: 3, kind: "number"}},
+		{addr: 11, op: opPop},
+	}
+	lines := decompileRange(code, 0, len(code), 0)
+	got := strings.Join(lines, "\n")
+	want := "if (mode == \"one\") {\n    return \"a\";\n}\nelse {\n    return \"b\";\n}"
+	if got != want {
+		t.Fatalf("forward dispatch:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecoverForwardDispatchMultipleCases(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 7, kind: "number"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "a", kind: "string"}},
+		{addr: 2, op: opRet},
+		{addr: 3, op: opPushString, operand: &operand{str: "b", kind: "string"}},
+		{addr: 4, op: opRet},
+		{addr: 5, op: opPushString, operand: &operand{str: "c", kind: "string"}},
+		{addr: 6, op: opRet},
+		{addr: 7, op: opPushVariable, operand: &operand{str: "mode"}},
+		{addr: 8, op: opCopy},
+		{addr: 9, op: opPushString, operand: &operand{str: "one", kind: "string"}},
+		{addr: 10, op: opEqual},
+		{addr: 11, op: opJeq, operand: &operand{number: 1, kind: "number"}},
+		{addr: 12, op: opCopy},
+		{addr: 13, op: opPushString, operand: &operand{str: "two", kind: "string"}},
+		{addr: 14, op: opEqual},
+		{addr: 15, op: opJeq, operand: &operand{number: 3, kind: "number"}},
+		{addr: 16, op: opJmp, operand: &operand{number: 5, kind: "number"}},
+		{addr: 17, op: opPop},
+	}
+	lines := decompileRange(code, 0, len(code), 0)
+	got := strings.Join(lines, "\n")
+	want := "if (mode == \"one\") {\n    return \"a\";\n}\nelse if (mode == \"two\") {\n    return \"b\";\n}\nelse {\n    return \"c\";\n}"
+	if got != want {
+		t.Fatalf("forward multi dispatch:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecoverForwardDispatchCaseAfterTable(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 3, kind: "number"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "a", kind: "string"}},
+		{addr: 2, op: opRet},
+		{addr: 3, op: opPushVariable, operand: &operand{str: "mode"}},
+		{addr: 4, op: opCopy},
+		{addr: 5, op: opPushString, operand: &operand{str: "one", kind: "string"}},
+		{addr: 6, op: opEqual},
+		{addr: 7, op: opJeq, operand: &operand{number: 1, kind: "number"}},
+		{addr: 8, op: opCopy},
+		{addr: 9, op: opPushString, operand: &operand{str: "two", kind: "string"}},
+		{addr: 10, op: opEqual},
+		{addr: 11, op: opJeq, operand: &operand{number: 14, kind: "number"}},
+		{addr: 12, op: opPop},
+		{addr: 13, op: opRet},
+		{addr: 14, op: opPushString, operand: &operand{str: "b", kind: "string"}},
+		{addr: 15, op: opRet},
+	}
+	lines := decompileRange(code, 0, len(code), 0)
+	got := strings.Join(lines, "\n")
+	want := "if (mode == \"one\") {\n    return \"a\";\n}\nelse if (mode == \"two\") {\n    return \"b\";\n}"
+	if got != want {
+		t.Fatalf("forward dispatch after table:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecoverForwardDispatchKeepsLoopBodyWhole(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 11, kind: "number"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "i"}},
+		{addr: 2, op: opPushNumber, operand: &operand{number: 0, kind: "number"}},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "i"}},
+		{addr: 5, op: opPushNumber, operand: &operand{number: 3, kind: "number"}},
+		{addr: 6, op: opLessThan},
+		{addr: 7, op: opJne, operand: &operand{number: 15, kind: "number"}},
+		{addr: 8, op: opPushVariable, operand: &operand{str: "i"}},
+		{addr: 9, op: opInc},
+		{addr: 10, op: opJmp, operand: &operand{number: 4, kind: "number"}},
+		{addr: 11, op: opPushVariable, operand: &operand{str: "mode"}},
+		{addr: 12, op: opCopy},
+		{addr: 13, op: opPushString, operand: &operand{str: "loop", kind: "string"}},
+		{addr: 14, op: opEqual},
+		{addr: 15, op: opJeq, operand: &operand{number: 1, kind: "number"}},
+		{addr: 16, op: opPop},
+	}
+	lines := decompileRange(code, 0, len(code), 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") {
+		t.Fatalf("loop dispatch leaked goto:\n%s", got)
+	}
+}
+
 func TestDispatchSelectorUsesRecoveredRegisters(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opGetRegister, operand: &operand{number: 1, kind: "number"}},
@@ -180,6 +359,32 @@ func TestDispatchSelectorUsesRecoveredRegisters(t *testing.T) {
 	selector, pos, ok := dispatchSelector(code, 0, state)
 	if !ok || selector != "obj.title" || pos != 4 {
 		t.Fatalf("dispatch selector = %q, %d, %v; want obj.title, 4, true", selector, pos, ok)
+	}
+}
+
+func TestDispatchSelectorSupportsFunctionCalls(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opPushArray},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "getPremiumOption"}},
+		{addr: 2, op: opCall},
+		{addr: 3, op: opCopy},
+	}
+	selector, pos, ok := dispatchSelector(code, 0, newDecompileState())
+	if !ok || selector != "getPremiumOption()" || pos != 3 {
+		t.Fatalf("dispatch selector = %q, %d, %v; want getPremiumOption(), 3, true", selector, pos, ok)
+	}
+}
+
+func TestDispatchSelectorSupportsThisO(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opThisO},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "photobuttonsource"}},
+		{addr: 2, op: opAccessMember},
+		{addr: 3, op: opCopy},
+	}
+	selector, pos, ok := dispatchSelector(code, 0, newDecompileState())
+	if !ok || selector != "thiso.photobuttonsource" || pos != 3 {
+		t.Fatalf("dispatch selector = %q, %d, %v; want thiso.photobuttonsource, 3, true", selector, pos, ok)
 	}
 }
 

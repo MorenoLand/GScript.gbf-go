@@ -465,11 +465,15 @@ func decompileModule(mod module) string {
 				state.skip = nestedFunctionRanges(fn, ranges)
 			}
 			body := decompileRangeWithState(mod.code, fn.start, fn.end, 1, state)
-			chunks = append(chunks, "function "+fn.name+"("+strings.Join(fn.params, ", ")+")\n{\n"+strings.Join(body, "\n")+"\n}")
+			body = removeDuplicateGotos(body)
+			body = recoverProfileCloneBlocks(body)
+			chunks = append(chunks, functionSignature(fn.name, fn.params)+" {\n"+strings.Join(body, "\n")+"\n}")
 		}
 		return strings.Join(chunks, "\n\n") + "\n"
 	}
 	lines := decompileRange(mod.code, 0, len(mod.code), 0)
+	lines = removeDuplicateGotos(lines)
+	lines = recoverProfileCloneBlocks(lines)
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -528,6 +532,16 @@ func isSyntheticFunction(name string) bool {
 	_, errA := strconv.Atoi(parts[1])
 	_, errB := strconv.Atoi(parts[2])
 	return errA == nil && errB == nil
+}
+
+func functionSignature(name string, params []string) string {
+	for _, visibility := range []string{"public", "private", "protected"} {
+		prefix := visibility + "."
+		if strings.HasPrefix(name, prefix) {
+			return visibility + " function " + strings.TrimPrefix(name, prefix) + "(" + strings.Join(params, ", ") + ")"
+		}
+	}
+	return "function " + name + "(" + strings.Join(params, ", ") + ")"
 }
 
 type decompileState struct {
@@ -780,6 +794,9 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			if recoveredLHS, recoveredRHS, ok := recoverFormatAssignment(lhs, rhs); ok {
 				lhs, rhs = recoveredLHS, recoveredRHS
 			}
+			if recoveredLHS, recoveredRHS, ok := recoverNewMultiDimAssignment(lhs, rhs); ok {
+				lhs, rhs = recoveredLHS, recoveredRHS
+			}
 			if isHiddenFunctionBinding(lhs, rhs) {
 				continue
 			}
@@ -809,18 +826,30 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 				if forLoop, ok := recoverForLoop(lines, body, condition, pc, indent); ok {
 					lines = forLoop
 				} else {
-					lines = append(lines, pad(indent)+"if ("+condition+")")
-					lines = append(lines, pad(indent)+"{")
+					lines = append(lines, pad(indent)+"if ("+condition+") {")
 					lines = append(lines, body...)
 					lines = append(lines, pad(indent)+"}")
 				}
 				pc = target - 1
 			} else {
-				lines = append(lines, pad(indent)+fmt.Sprintf("if (%s) goto label_%d;", condition, target))
+				loopCondition := condition
+				if ins.op == opJeq {
+					loopCondition = "!(" + condition + ")"
+				}
+				body := decompileRangeWithStateAndStack(code, pc+1, end, indent+1, state, stack)
+				if forLoop, ok := recoverForLoop(lines, body, loopCondition, pc, indent); ok {
+					lines = forLoop
+					pc = end - 1
+				} else {
+					lines = append(lines, pad(indent)+fmt.Sprintf("if (%s) goto label_%d;", condition, target))
+				}
 			}
 		case opJmp:
 			target := jumpTarget(ins)
-			if dispatchLines, newPC, ok := recoverBackwardDispatch(code, pc, target, end, indent, state); ok {
+			if dispatchLines, newPC, ok := recoverForwardDispatch(code, pc, target, end, indent, state); ok {
+				lines = append(lines, dispatchLines...)
+				pc = newPC
+			} else if dispatchLines, newPC, ok := recoverBackwardDispatch(code, pc, target, end, indent, state); ok {
 				lines = append(lines, dispatchLines...)
 				pc = newPC
 			} else if skipsEmbeddedFunction(state.skip, pc+1, target) {
@@ -834,8 +863,7 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			if target > pc && target <= end {
 				body := decompileRangeWithState(code, pc+1, target, indent+1, state)
 				body = trimForEachBookkeeping(body)
-				lines = append(lines, pad(indent)+"for ("+condition+")")
-				lines = append(lines, pad(indent)+"{")
+				lines = append(lines, pad(indent)+"for ("+condition+") {")
 				lines = append(lines, body...)
 				lines = append(lines, pad(indent)+"}")
 				pc = target - 1
@@ -915,10 +943,10 @@ func recoverForLoop(lines []string, body []string, condition string, pc int, ind
 			incLine = strings.TrimSpace(workBody[len(workBody)-1])
 		}
 	}
-	if !strings.HasSuffix(incLine, " += 1;") {
+	incVar, inc, ok := parseLoopIncrement(incLine)
+	if !ok {
 		return nil, false
 	}
-	incVar := strings.TrimSuffix(incLine, " += 1;")
 
 	initLine := strings.TrimSpace(lines[len(lines)-1])
 	initPrefix := incVar + " = "
@@ -930,18 +958,194 @@ func recoverForLoop(lines []string, body []string, condition string, pc int, ind
 	}
 
 	init := strings.TrimSuffix(initLine, ";")
-	inc := strings.TrimSuffix(incLine, ";")
 	result := append([]string(nil), lines[:len(lines)-1]...)
-	result = append(result, pad(indent)+"for ("+init+"; "+condition+"; "+inc+")")
-	result = append(result, pad(indent)+"{")
+	result = append(result, pad(indent)+"for ("+init+"; "+condition+"; "+inc+") {")
 	result = append(result, workBody[:len(workBody)-1]...)
 	result = append(result, pad(indent)+"}")
 	return result, true
 }
 
+func parseLoopIncrement(line string) (string, string, bool) {
+	line = strings.TrimSuffix(strings.TrimSpace(line), ";")
+	if strings.HasSuffix(line, " += 1") {
+		return strings.TrimSuffix(line, " += 1"), line, true
+	}
+	if idx := strings.Index(line, " = "); idx >= 0 {
+		lhs := line[:idx]
+		rhs := line[idx+3:]
+		prefix := lhs + " + "
+		if strings.HasPrefix(rhs, prefix) {
+			step := strings.TrimSpace(strings.TrimPrefix(rhs, prefix))
+			if step != "" {
+				return lhs, lhs + " += " + step, true
+			}
+		}
+	}
+	return "", "", false
+}
+
 type dispatchCase struct {
 	condition string
 	target    int
+}
+
+func recoverForwardDispatch(code []instruction, pc, target, end, indent int, state *decompileState) ([]string, int, bool) {
+	if target <= pc+1 || target >= end {
+		return nil, 0, false
+	}
+	cases, tail, ok := parseForwardDispatchCases(code, pc, target, end, state)
+	if !ok || len(cases) == 0 {
+		return nil, 0, false
+	}
+	targets := make([]int, 0, len(cases))
+	seen := map[int]bool{}
+	for _, c := range cases {
+		if c.target <= pc || c.target >= end || seen[c.target] {
+			continue
+		}
+		seen[c.target] = true
+		targets = append(targets, c.target)
+	}
+	if len(targets) == 0 {
+		return nil, 0, false
+	}
+	sort.Ints(targets)
+	targetToNext := map[int]int{}
+	for i, t := range targets {
+		next := target
+		if i+1 < len(targets) {
+			next = targets[i+1]
+		} else if t >= tail {
+			next = end
+		}
+		if t < target && next > target {
+			next = target
+		}
+		if t >= tail {
+			next = caseBodyEnd(code, t, next)
+		}
+		targetToNext[t] = next
+	}
+	commonEnd, hasCommonEnd := forwardDispatchCommonEnd(code, targets, target)
+	var lines []string
+	maxEnd := tail
+	for i, c := range cases {
+		bodyEnd := targetToNext[c.target]
+		if bodyEnd <= c.target {
+			return nil, 0, false
+		}
+		if bodyEnd > maxEnd {
+			maxEnd = bodyEnd
+		}
+		body := removeDuplicateGotos(decompileRangeWithState(code, c.target, bodyEnd, indent+1, state))
+		if hasCommonEnd {
+			body = trimTrailingGoto(body, commonEnd)
+		}
+		if c.condition == "" {
+			lines = append(lines, pad(indent)+"else {")
+		} else if i == 0 {
+			lines = append(lines, pad(indent)+"if ("+c.condition+") {")
+		} else {
+			lines = append(lines, pad(indent)+"else if ("+c.condition+") {")
+		}
+		lines = append(lines, body...)
+		lines = append(lines, pad(indent)+"}")
+	}
+	return lines, maxEnd - 1, true
+}
+
+func parseForwardDispatchCases(code []instruction, pc, target, end int, state *decompileState) ([]dispatchCase, int, bool) {
+	selector, pos, ok := dispatchSelector(code, target, state)
+	if !ok {
+		return nil, 0, false
+	}
+	var cases []dispatchCase
+	for pos+4 < end {
+		if code[pos].op != opCopy || code[pos+2].op != opEqual {
+			break
+		}
+		lit, ok := dispatchLiteral(code[pos+1])
+		if !ok {
+			break
+		}
+		jump := code[pos+3]
+		if jump.op != opJeq && jump.op != opJne {
+			break
+		}
+		caseTarget := jumpTarget(jump)
+		if caseTarget <= pc || caseTarget >= end {
+			break
+		}
+		condition := selector + " == " + lit
+		if jump.op == opJne {
+			condition = selector + " != " + lit
+		}
+		cases = append(cases, dispatchCase{condition: condition, target: caseTarget})
+		pos += 4
+	}
+	if pos < end && code[pos].op == opJmp {
+		defaultTarget := jumpTarget(code[pos])
+		if defaultTarget > pc && defaultTarget < target {
+			cases = append(cases, dispatchCase{target: defaultTarget})
+			pos++
+		}
+	}
+	if pos < end && code[pos].op == opPop {
+		pos++
+	}
+	return cases, pos, len(cases) > 0
+}
+
+func dispatchLiteral(ins instruction) (string, bool) {
+	if ins.operand == nil {
+		return "", false
+	}
+	switch ins.op {
+	case opPushString:
+		return quote(ins.operand.str), true
+	case opPushNumber:
+		return numberText(ins.operand), true
+	default:
+		return "", false
+	}
+}
+
+func forwardDispatchCommonEnd(code []instruction, targets []int, dispatchStart int) (int, bool) {
+	commonEnd := -1
+	for i, target := range targets {
+		limit := dispatchStart
+		if i+1 < len(targets) {
+			limit = targets[i+1]
+		}
+		endJump := -1
+		for pos := target; pos < limit; pos++ {
+			if code[pos].op == opJmp && jumpTarget(code[pos]) >= dispatchStart {
+				endJump = jumpTarget(code[pos])
+			}
+		}
+		if endJump < 0 {
+			continue
+		}
+		if commonEnd < 0 {
+			commonEnd = endJump
+		} else if commonEnd != endJump {
+			return 0, false
+		}
+	}
+	return commonEnd, commonEnd >= 0
+}
+
+func caseBodyEnd(code []instruction, start, limit int) int {
+	if limit > len(code) {
+		limit = len(code)
+	}
+	for i := start; i < limit; i++ {
+		switch code[i].op {
+		case opRet, opJmp:
+			return i + 1
+		}
+	}
+	return limit
 }
 
 func recoverBackwardDispatch(code []instruction, pc, target, end, indent int, state *decompileState) ([]string, int, bool) {
@@ -977,14 +1181,13 @@ func recoverBackwardDispatch(code []instruction, pc, target, end, indent int, st
 		if bodyEnd <= c.target {
 			return nil, 0, false
 		}
-		body := decompileRangeWithState(code, c.target, bodyEnd, indent+1, state)
+		body := removeDuplicateGotos(decompileRangeWithState(code, c.target, bodyEnd, indent+1, state))
 		body = trimTrailingGoto(body, commonEnd)
 		if i == 0 {
-			lines = append(lines, pad(indent)+"if ("+c.condition+")")
+			lines = append(lines, pad(indent)+"if ("+c.condition+") {")
 		} else {
-			lines = append(lines, pad(indent)+"else if ("+c.condition+")")
+			lines = append(lines, pad(indent)+"else if ("+c.condition+") {")
 		}
-		lines = append(lines, pad(indent)+"{")
 		lines = append(lines, body...)
 		lines = append(lines, pad(indent)+"}")
 	}
@@ -1037,11 +1240,13 @@ func dispatchSelector(code []instruction, target int, state *decompileState) (st
 			return stack[0].text, pos, true
 		}
 		switch ins.op {
+		case opPushArray:
+			stack = append(stack, expr{marker: true})
 		case opPushVariable:
 			if ins.operand == nil {
 				return "", 0, false
 			}
-			stack = append(stack, expr{text: ins.operand.str})
+			stack = append(stack, expr{text: variableName(ins.operand.str)})
 		case opPushString:
 			if ins.operand == nil {
 				return "", 0, false
@@ -1051,12 +1256,18 @@ func dispatchSelector(code []instruction, target int, state *decompileState) (st
 			stack = append(stack, expr{text: numberText(ins.operand)})
 		case opThis:
 			stack = append(stack, expr{text: "this"})
+		case opThisO:
+			stack = append(stack, expr{text: "thiso"})
 		case opTemp:
 			stack = append(stack, expr{text: "temp"})
 		case opPlayer:
 			stack = append(stack, expr{text: "player"})
+		case opPlayerO:
+			stack = append(stack, expr{text: "playero"})
 		case opLevel:
 			stack = append(stack, expr{text: "level"})
+		case opParams:
+			stack = append(stack, expr{text: "params"})
 		case opGetRegister:
 			id := operandNumber(ins)
 			if state != nil {
@@ -1066,7 +1277,9 @@ func dispatchSelector(code []instruction, target int, state *decompileState) (st
 				}
 			}
 			stack = append(stack, expr{text: fmt.Sprintf("reg%d", id)})
-		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar:
+		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams:
+		case opCall:
+			stack = append(stack, expr{text: buildCall(&stack), kind: "call"})
 		case opAccessMember:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
 			stack = append(stack, expr{text: memberBase(lhs.text) + "." + rhs.text})
@@ -1210,11 +1423,72 @@ func trimAfterReturn(body []string) []string {
 }
 
 func isGotoLine(line string) bool {
+	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "goto label_") || !strings.HasSuffix(line, ";") {
 		return false
 	}
 	_, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(line, "goto label_"), ";"))
 	return err == nil
+}
+
+func recoverProfileCloneBlocks(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		name, _, indent, ok := parseProfileCloneAssignment(lines[i])
+		if !ok {
+			out = append(out, lines[i])
+			continue
+		}
+		addIdx := -1
+		for j := i + 1; j < len(lines); j++ {
+			trimmed := strings.TrimSpace(lines[j])
+			if trimmed == "addcontrol("+quote(name)+");" {
+				addIdx = j
+				break
+			}
+			if parseLineIndent(lines[j]) != indent || strings.HasSuffix(trimmed, "{") || strings.HasPrefix(trimmed, "}") {
+				break
+			}
+		}
+		if addIdx < 0 {
+			out = append(out, lines[i])
+			continue
+		}
+		out = append(out, strings.Repeat(" ", indent)+"new GuiControlProfile("+quote(name)+") {")
+		for _, field := range lines[i+1 : addIdx] {
+			out = append(out, strings.Repeat(" ", indent+4)+strings.TrimSpace(field))
+		}
+		out = append(out, strings.Repeat(" ", indent)+"}")
+		out = append(out, lines[addIdx])
+		i = addIdx
+	}
+	return out
+}
+
+func parseProfileCloneAssignment(line string) (string, string, int, bool) {
+	indent := parseLineIndent(line)
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasSuffix(trimmed, ";") || !strings.Contains(trimmed, " = ") {
+		return "", "", 0, false
+	}
+	parts := strings.SplitN(strings.TrimSuffix(trimmed, ";"), " = ", 2)
+	if len(parts) != 2 || !isQuotedProfileName(parts[0]) || !isQuotedProfileName(parts[1]) {
+		return "", "", 0, false
+	}
+	name := unquoteText(parts[0])
+	base := unquoteText(parts[1])
+	if !strings.HasSuffix(name, "Profile") || !strings.HasSuffix(base, "Profile") {
+		return "", "", 0, false
+	}
+	return name, base, indent, true
+}
+
+func isQuotedProfileName(value string) bool {
+	return strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") && !strings.Contains(value, " @ ")
+}
+
+func parseLineIndent(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " "))
 }
 
 func isTerminalRet(code []instruction, pc int, end int) bool {
@@ -1225,6 +1499,17 @@ func isTerminalRet(code []instruction, pc int, end int) bool {
 		return false
 	}
 	return true
+}
+
+func removeDuplicateGotos(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if len(out) > 0 && strings.TrimSpace(line) == strings.TrimSpace(out[len(out)-1]) && isGotoLine(line) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 func collapseNestedIfs(lines []string) []string {
@@ -1566,6 +1851,88 @@ func trimLeadingShortCircuit(s string) string {
 		}
 	}
 	return s
+}
+
+func recoverNewMultiDimAssignment(lhs, rhs expr) (expr, expr, bool) {
+	if lhs.text != "/* missing */" || !strings.HasPrefix(rhs.text, "new [") {
+		return lhs, rhs, false
+	}
+	target, dims, ok := splitNewMultiDim(rhs.text)
+	if !ok || !isAssignableText(target) || len(dims) == 0 {
+		return lhs, rhs, false
+	}
+	var out strings.Builder
+	out.WriteString("new ")
+	for _, dim := range dims {
+		out.WriteString("[")
+		out.WriteString(dim)
+		out.WriteString("]")
+	}
+	return expr{text: target}, expr{text: out.String()}, true
+}
+
+func splitNewMultiDim(value string) (string, []string, bool) {
+	parts, ok := splitBracketParts(value)
+	if !ok || len(parts) < 2 {
+		return "", nil, false
+	}
+	target := parts[0]
+	dims := parts[1:]
+	if strings.HasPrefix(target, "new [") {
+		nestedTarget, nestedDims, nestedOK := splitNewMultiDim(target)
+		if !nestedOK {
+			return "", nil, false
+		}
+		target = nestedTarget
+		dims = append(nestedDims, dims...)
+	}
+	for i, dim := range dims {
+		dims[i] = unwrapSingleNewDim(dim)
+	}
+	return target, dims, true
+}
+
+func splitBracketParts(value string) ([]string, bool) {
+	if !strings.HasPrefix(value, "new ") {
+		return nil, false
+	}
+	var parts []string
+	for i := len("new "); i < len(value); {
+		if value[i] != '[' {
+			return nil, false
+		}
+		end := matchingBracket(value, i)
+		if end < 0 {
+			return nil, false
+		}
+		parts = append(parts, strings.TrimSpace(value[i+1:end]))
+		i = end + 1
+	}
+	return parts, true
+}
+
+func matchingBracket(value string, start int) int {
+	depth := 0
+	for i := start; i < len(value); i++ {
+		switch value[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func unwrapSingleNewDim(value string) string {
+	parts, ok := splitBracketParts(value)
+	if ok && len(parts) == 1 {
+		return parts[0]
+	}
+	return value
 }
 
 func splitTopLevelArgs(s string) []string {
