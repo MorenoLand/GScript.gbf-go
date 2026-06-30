@@ -201,9 +201,24 @@ func TestRecoverProfileCloneBlocks(t *testing.T) {
 		`    addcontrol("Game_ABCBrick_BigTextProfile");`,
 	})
 	got := strings.Join(lines, "\n")
-	want := "    new GuiControlProfile(\"Game_ABCBrick_BigTextProfile\") {\n        fontcolor = {0, 0, 0};\n        fontsize = 24;\n    }\n    addcontrol(\"Game_ABCBrick_BigTextProfile\");"
+	want := "    new GuiControlProfile(\"Game_ABCBrick_BigTextProfile\") {\n      fontcolor = {0, 0, 0};\n      fontsize = 24;\n    }\n    addcontrol(\"Game_ABCBrick_BigTextProfile\");"
 	if got != want {
 		t.Fatalf("profile clone block:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecoverBareConstructorBlocks(t *testing.T) {
+	lines := recoverBareConstructorBlocks([]string{
+		`    new GuiControl(controlname);`,
+		`    this.panel.gamescript = this;`,
+		`    y = 0;`,
+		`    x = y;`,
+		`    new GuiStretchCtrl("Window") {`,
+	})
+	got := strings.Join(lines, "\n")
+	want := "    new GuiControl(controlname) {\n      this.panel.gamescript = this;\n      y = 0;\n      x = y;\n    }\n    new GuiStretchCtrl(\"Window\") {"
+	if got != want {
+		t.Fatalf("bare constructor block:\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -218,6 +233,34 @@ func TestRemoveDuplicateGotos(t *testing.T) {
 	want := "    goto label_331;\n    if (x) goto label_331;\n    if (x) goto label_331;"
 	if got != want {
 		t.Fatalf("duplicate goto cleanup:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRemoveRepeatedAssignmentRuns(t *testing.T) {
+	lines := removeRepeatedAssignmentRuns([]string{
+		"  y = 0;",
+		"  x = y;",
+		"  extent = parent.clientextent;",
+		"  y = 0;",
+		"  x = y;",
+		"  extent = parent.clientextent;",
+	})
+	got := strings.Join(lines, "\n")
+	want := "  y = 0;\n  x = y;\n  extent = parent.clientextent;"
+	if got != want {
+		t.Fatalf("assignment run cleanup:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecoverForwardGotoGuards(t *testing.T) {
+	lines := recoverForwardGotoGuards([]string{
+		`    if (isObject("Game_ABCBrick_StartScreen_BackGround")) goto label_6486;`,
+		`    Game_ABCBrick_StartScreen_BackGround.makeFirstResponder(true);`,
+	})
+	got := strings.Join(lines, "\n")
+	want := "    if (!(isObject(\"Game_ABCBrick_StartScreen_BackGround\"))) {\n      Game_ABCBrick_StartScreen_BackGround.makeFirstResponder(true);\n    }"
+	if got != want {
+		t.Fatalf("forward goto guard:\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -256,7 +299,7 @@ func TestRecoverForwardDispatch(t *testing.T) {
 	}
 	lines := decompileRange(code, 0, len(code), 0)
 	got := strings.Join(lines, "\n")
-	want := "if (mode == \"one\") {\n    return \"a\";\n}\nelse {\n    return \"b\";\n}"
+	want := "if (mode == \"one\") {\n  return \"a\";\n}\nelse {\n  return \"b\";\n}"
 	if got != want {
 		t.Fatalf("forward dispatch:\n%s\nwant:\n%s", got, want)
 	}
@@ -285,7 +328,7 @@ func TestRecoverForwardDispatchMultipleCases(t *testing.T) {
 	}
 	lines := decompileRange(code, 0, len(code), 0)
 	got := strings.Join(lines, "\n")
-	want := "if (mode == \"one\") {\n    return \"a\";\n}\nelse if (mode == \"two\") {\n    return \"b\";\n}\nelse {\n    return \"c\";\n}"
+	want := "if (mode == \"one\") {\n  return \"a\";\n}\nelse if (mode == \"two\") {\n  return \"b\";\n}\nelse {\n  return \"c\";\n}"
 	if got != want {
 		t.Fatalf("forward multi dispatch:\n%s\nwant:\n%s", got, want)
 	}
@@ -312,7 +355,7 @@ func TestRecoverForwardDispatchCaseAfterTable(t *testing.T) {
 	}
 	lines := decompileRange(code, 0, len(code), 0)
 	got := strings.Join(lines, "\n")
-	want := "if (mode == \"one\") {\n    return \"a\";\n}\nelse if (mode == \"two\") {\n    return \"b\";\n}"
+	want := "if (mode == \"one\") {\n  return \"a\";\n}\nelse if (mode == \"two\") {\n  return \"b\";\n}"
 	if got != want {
 		t.Fatalf("forward dispatch after table:\n%s\nwant:\n%s", got, want)
 	}
@@ -402,8 +445,28 @@ func TestAssignmentStyleGuiConstructorOpensWithBlock(t *testing.T) {
 	}, 0, 9, 0)
 
 	got := strings.Join(lines, "\n")
-	want := "new GuiWindowCtrl(\"FileBrowser_Screen\") {\n    text = \"File Browser\";\n}"
+	want := "new GuiWindowCtrl(\"FileBrowser_Screen\") {\n  text = \"File Browser\";\n}"
 	if got != want {
 		t.Fatalf("constructor block:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestAssignmentStyleGuiConstructorKeepsVariableNameArgument(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "controlname"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "GuiControl", kind: "string"}},
+		{addr: 2, op: opNewObject},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opConvertToObject},
+		{addr: 5, op: opWith, operand: &operand{number: 9, kind: "number"}},
+		{addr: 6, op: opPushVariable, operand: &operand{str: "alpha"}},
+		{addr: 7, op: opPushNumber, operand: &operand{number: 10, kind: "number"}},
+		{addr: 8, op: opAssign},
+	}, 0, 9, 0)
+
+	got := strings.Join(lines, "\n")
+	want := "new GuiControl(controlname) {\n  alpha = 10;\n}"
+	if got != want {
+		t.Fatalf("constructor variable arg:\n%s\nwant:\n%s", got, want)
 	}
 }

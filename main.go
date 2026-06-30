@@ -467,6 +467,9 @@ func decompileModule(mod module) string {
 			body := decompileRangeWithState(mod.code, fn.start, fn.end, 1, state)
 			body = removeDuplicateGotos(body)
 			body = recoverProfileCloneBlocks(body)
+			body = recoverBareConstructorBlocks(body)
+			body = removeRepeatedAssignmentRuns(body)
+			body = recoverForwardGotoGuards(body)
 			chunks = append(chunks, functionSignature(fn.name, fn.params)+" {\n"+strings.Join(body, "\n")+"\n}")
 		}
 		return strings.Join(chunks, "\n\n") + "\n"
@@ -474,6 +477,9 @@ func decompileModule(mod module) string {
 	lines := decompileRange(mod.code, 0, len(mod.code), 0)
 	lines = removeDuplicateGotos(lines)
 	lines = recoverProfileCloneBlocks(lines)
+	lines = recoverBareConstructorBlocks(lines)
+	lines = removeRepeatedAssignmentRuns(lines)
+	lines = recoverForwardGotoGuards(lines)
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -1474,7 +1480,7 @@ func recoverProfileCloneBlocks(lines []string) []string {
 		}
 		out = append(out, strings.Repeat(" ", indent)+"new GuiControlProfile("+quote(name)+") {")
 		for _, field := range lines[i+1 : addIdx] {
-			out = append(out, strings.Repeat(" ", indent+4)+strings.TrimSpace(field))
+			out = append(out, strings.Repeat(" ", indent)+pad(1)+strings.TrimSpace(field))
 		}
 		out = append(out, strings.Repeat(" ", indent)+"}")
 		out = append(out, lines[addIdx])
@@ -1509,6 +1515,52 @@ func parseLineIndent(line string) int {
 	return len(line) - len(strings.TrimLeft(line, " "))
 }
 
+func recoverBareConstructorBlocks(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		indent := parseLineIndent(lines[i])
+		trimmed := strings.TrimSpace(lines[i])
+		if !isBareGuiConstructorLine(trimmed) {
+			out = append(out, lines[i])
+			continue
+		}
+		end := i + 1
+		for end < len(lines) && isConstructorFieldLine(lines[end], indent) {
+			end++
+		}
+		if end == i+1 {
+			out = append(out, lines[i])
+			continue
+		}
+		out = append(out, strings.Repeat(" ", indent)+strings.TrimSuffix(trimmed, ";")+" {")
+		for _, field := range lines[i+1 : end] {
+			out = append(out, strings.Repeat(" ", indent)+pad(1)+strings.TrimSpace(field))
+		}
+		out = append(out, strings.Repeat(" ", indent)+"}")
+		i = end - 1
+	}
+	return out
+}
+
+func isBareGuiConstructorLine(line string) bool {
+	return strings.HasPrefix(line, "new Gui") && strings.HasSuffix(line, ");") && !strings.Contains(line, "{")
+}
+
+func isConstructorFieldLine(line string, indent int) bool {
+	if parseLineIndent(line) != indent {
+		return false
+	}
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasSuffix(trimmed, ";") || strings.HasPrefix(trimmed, "new ") || strings.HasPrefix(trimmed, "addcontrol(") || strings.Contains(trimmed, "goto label_") {
+		return false
+	}
+	if strings.Contains(trimmed, " = ") {
+		lhs := strings.TrimSpace(strings.SplitN(trimmed, " = ", 2)[0])
+		return !strings.ContainsAny(lhs, " (){}")
+	}
+	return false
+}
+
 func isTerminalRet(code []instruction, pc int, end int) bool {
 	for i := pc + 1; i < end; i++ {
 		if code[i].op == opJmp && jumpTarget(code[i]) >= end {
@@ -1528,6 +1580,85 @@ func removeDuplicateGotos(lines []string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+func removeRepeatedAssignmentRuns(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); {
+		bestLen := 0
+		for n := 2; n <= 8 && i+2*n <= len(lines); n++ {
+			if sameAssignmentRun(lines[i:i+n], lines[i+n:i+2*n]) {
+				bestLen = n
+			}
+		}
+		if bestLen > 0 {
+			out = append(out, lines[i:i+bestLen]...)
+			i += bestLen * 2
+			continue
+		}
+		out = append(out, lines[i])
+		i++
+	}
+	return out
+}
+
+func sameAssignmentRun(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i]) != strings.TrimSpace(b[i]) || !isSimpleAssignmentLine(a[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSimpleAssignmentLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasSuffix(trimmed, ";") && strings.Contains(trimmed, " = ") && !strings.HasPrefix(trimmed, "if ") && !strings.HasPrefix(trimmed, "for ")
+}
+
+func recoverForwardGotoGuards(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		cond, _, indent, ok := parseGotoIfLine(lines[i])
+		if !ok || i+1 >= len(lines) || !isSimpleStatementLine(lines[i+1], indent) {
+			out = append(out, lines[i])
+			continue
+		}
+		out = append(out, strings.Repeat(" ", indent)+"if (!("+cond+")) {")
+		out = append(out, strings.Repeat(" ", indent)+pad(1)+strings.TrimSpace(lines[i+1]))
+		out = append(out, strings.Repeat(" ", indent)+"}")
+		i++
+	}
+	return out
+}
+
+func parseGotoIfLine(line string) (string, int, int, bool) {
+	indent := parseLineIndent(line)
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "if (") || !strings.Contains(trimmed, ") goto label_") || !strings.HasSuffix(trimmed, ";") {
+		return "", 0, 0, false
+	}
+	pivot := strings.LastIndex(trimmed, ") goto label_")
+	if pivot < len("if (") {
+		return "", 0, 0, false
+	}
+	labelText := strings.TrimSuffix(strings.TrimPrefix(trimmed[pivot+len(") goto label_"):], ""), ";")
+	label, err := strconv.Atoi(labelText)
+	if err != nil {
+		return "", 0, 0, false
+	}
+	return trimmed[len("if ("):pivot], label, indent, true
+}
+
+func isSimpleStatementLine(line string, indent int) bool {
+	if parseLineIndent(line) != indent {
+		return false
+	}
+	trimmed := strings.TrimSpace(line)
+	return strings.HasSuffix(trimmed, ";") && !strings.HasPrefix(trimmed, "goto label_") && !strings.HasPrefix(trimmed, "if ") && !strings.HasPrefix(trimmed, "for ") && !strings.HasPrefix(trimmed, "return")
 }
 
 func collapseNestedIfs(lines []string) []string {
@@ -2017,11 +2148,21 @@ func constructorArg(value expr) string {
 	if isObjectNameExpr(value) {
 		return value.text
 	}
-	return quote(value.text)
+	if looksLikeGuiObjectName(value.text) {
+		return quote(value.text)
+	}
+	return value.text
+}
+
+func looksLikeGuiObjectName(value string) bool {
+	if value == "" || strings.ContainsAny(value, ".[]() @") {
+		return false
+	}
+	return strings.Contains(value, "_") || value[0] >= 'A' && value[0] <= 'Z'
 }
 
 func pad(level int) string {
-	return strings.Repeat("    ", level)
+	return strings.Repeat("  ", level)
 }
 
 type byteReader struct {
