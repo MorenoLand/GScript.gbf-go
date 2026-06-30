@@ -1370,7 +1370,11 @@ func parseBackwardDispatchCases(code []instruction, pc, target, end int, state *
 	}
 	var cases []dispatchCase
 	for pos+4 < end {
-		if code[pos].op != opCopy || code[pos+1].op != opPushString || code[pos+2].op != opEqual {
+		if code[pos].op != opCopy || code[pos+2].op != opEqual {
+			break
+		}
+		lit, ok := dispatchLiteral(code[pos+1])
+		if !ok {
 			break
 		}
 		jump := code[pos+3]
@@ -1385,7 +1389,6 @@ func parseBackwardDispatchCases(code []instruction, pc, target, end int, state *
 		if caseTarget <= pc || caseTarget >= target {
 			break
 		}
-		lit := quote(code[pos+1].operand.str)
 		condition := selector + " == " + lit
 		if jump.op == opJne {
 			condition = selector + " != " + lit

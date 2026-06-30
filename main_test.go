@@ -512,6 +512,35 @@ func TestRecoverBackwardDispatchSkipsLeadingDefaultCase(t *testing.T) {
 	}
 }
 
+func TestRecoverBackwardDispatchWithNumericCases(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 9, kind: "number"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "result"}},
+		{addr: 2, op: opPushString, operand: &operand{str: "six", kind: "string"}},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opJmp, operand: &operand{number: 18, kind: "number"}},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "result"}},
+		{addr: 6, op: opPushString, operand: &operand{str: "nine", kind: "string"}},
+		{addr: 7, op: opAssign},
+		{addr: 8, op: opJmp, operand: &operand{number: 18, kind: "number"}},
+		{addr: 9, op: opPushVariable, operand: &operand{str: "level"}},
+		{addr: 10, op: opCopy},
+		{addr: 11, op: opPushNumber, operand: &operand{number: 6, kind: "number"}},
+		{addr: 12, op: opEqual},
+		{addr: 13, op: opJeq, operand: &operand{number: 1, kind: "number"}},
+		{addr: 14, op: opCopy},
+		{addr: 15, op: opPushNumber, operand: &operand{number: 9, kind: "number"}},
+		{addr: 16, op: opEqual},
+		{addr: 17, op: opJeq, operand: &operand{number: 5, kind: "number"}},
+		{addr: 18, op: opPop},
+	}
+	lines := decompileRange(code, 0, len(code), 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, "if (level == 6)") || !strings.Contains(got, "else if (level == 9)") {
+		t.Fatalf("numeric backward dispatch not recovered:\n%s", got)
+	}
+}
+
 func TestRecoverForLoopConvertsInternalBackEdgeToContinue(t *testing.T) {
 	lines := []string{"i = 0;"}
 	body := []string{
