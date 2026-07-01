@@ -470,6 +470,7 @@ func decompileModule(mod module) string {
 			body = recoverBareConstructorBlocks(body)
 			body = removeRepeatedAssignmentRuns(body)
 			body = recoverForwardGotoGuardsFixedPoint(body)
+			body = recoverForwardIfGotoLoops(body)
 			body = recoverSleepLoopBlocks(body)
 			chunks = append(chunks, functionSignature(fn.name, fn.params)+" {\n"+strings.Join(body, "\n")+"\n}")
 		}
@@ -481,6 +482,7 @@ func decompileModule(mod module) string {
 	lines = recoverBareConstructorBlocks(lines)
 	lines = removeRepeatedAssignmentRuns(lines)
 	lines = recoverForwardGotoGuardsFixedPoint(lines)
+	lines = recoverForwardIfGotoLoops(lines)
 	lines = recoverSleepLoopBlocks(lines)
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -1030,6 +1032,61 @@ func parseLoopIncrement(line string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+func recoverForwardIfGotoLoops(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		if i+1 >= len(lines) {
+			out = append(out, lines[i])
+			continue
+		}
+		initLine := strings.TrimSpace(lines[i])
+		if !strings.HasSuffix(initLine, ";") || !strings.Contains(initLine, " = ") || parseLineIndent(lines[i]) != parseLineIndent(lines[i+1]) {
+			out = append(out, lines[i])
+			continue
+		}
+		condition, ok := parseBlockIfLine(lines[i+1])
+		if !ok {
+			out = append(out, lines[i])
+			continue
+		}
+		blockEnd := matchingBlockEnd(lines, i+1)
+		if blockEnd < 0 {
+			out = append(out, lines[i])
+			continue
+		}
+		body := lines[i+2 : blockEnd]
+		if len(body) < 2 || !isGotoLine(strings.TrimSpace(body[len(body)-1])) {
+			out = append(out, lines[i])
+			continue
+		}
+		incVar, inc, ok := parseLoopIncrement(body[len(body)-2])
+		if !ok || !strings.HasPrefix(initLine, incVar+" = ") || !strings.Contains(condition, incVar) {
+			out = append(out, lines[i])
+			continue
+		}
+		labelText := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(body[len(body)-1]), "goto label_"), ";")
+		label, err := strconv.Atoi(labelText)
+		if err != nil {
+			out = append(out, lines[i])
+			continue
+		}
+		indent := parseLineIndent(lines[i])
+		out = append(out, strings.Repeat(" ", indent)+"for ("+strings.TrimSuffix(initLine, ";")+"; "+condition+"; "+inc+") {")
+		out = append(out, replaceGotoTarget(body[:len(body)-2], label, "continue;")...)
+		out = append(out, strings.Repeat(" ", indent)+"}")
+		i = blockEnd
+	}
+	return out
+}
+
+func parseBlockIfLine(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "if (") || !strings.HasSuffix(trimmed, ") {") {
+		return "", false
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(trimmed, "if ("), ") {"), true
 }
 
 func recoverWhileLoop(body []string, condition string, pc int, indent int) ([]string, bool) {

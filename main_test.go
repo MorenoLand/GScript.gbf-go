@@ -379,6 +379,22 @@ func TestRecoverForLoopWithAssignmentIncrement(t *testing.T) {
 	}
 }
 
+func TestRecoverForwardIfGotoLoops(t *testing.T) {
+	lines := recoverForwardIfGotoLoops([]string{
+		`  temp.i = 0;`,
+		`  if (temp.i < this.items.size()) {`,
+		`    addcontrol(temp.i);`,
+		`    temp.i += 1;`,
+		`    goto label_5107;`,
+		`  }`,
+	})
+	got := strings.Join(lines, "\n")
+	want := "  for (temp.i = 0; temp.i < this.items.size(); temp.i += 1) {\n    addcontrol(temp.i);\n  }"
+	if got != want {
+		t.Fatalf("forward if goto loop:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestRecoverWhileLoopWithSleep(t *testing.T) {
 	lines := decompileRange([]instruction{
 		{addr: 0, op: opPushTrue},
