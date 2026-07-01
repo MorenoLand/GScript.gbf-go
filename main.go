@@ -833,7 +833,9 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 				continue
 			}
 			rhs = normalizeAssignmentValue(lhs, rhs)
-			if isConstructorTarget(lhs, rhs) {
+			if isNamedGuiConstruction(lhs, rhs) {
+				lines = append(lines, pad(indent)+rhs.text+";")
+			} else if isConstructorTarget(lhs, rhs) {
 				lines = append(lines, pad(indent)+"new "+unquoteText(rhs.text)+"("+constructorArg(lhs)+");")
 			} else if rhs.kind == "class" {
 				lines = append(lines, pad(indent)+classAssignmentTarget(lhs)+" = new "+unquoteText(rhs.text)+"();")
@@ -2777,6 +2779,26 @@ func isConstructorLine(line string) bool {
 func isAssignmentConstructorLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return strings.Contains(trimmed, " = new ") && strings.HasSuffix(trimmed, ");")
+}
+
+func isNamedGuiConstruction(lhs, rhs expr) bool {
+	if rhs.kind != "object" || !strings.HasPrefix(rhs.text, "new Gui") {
+		return false
+	}
+	arg, ok := constructorExprArg(rhs.text)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(lhs.text) == strings.TrimSpace(arg)
+}
+
+func constructorExprArg(value string) (string, bool) {
+	start := strings.Index(value, "(")
+	end := strings.LastIndex(value, ")")
+	if start < 0 || end <= start {
+		return "", false
+	}
+	return value[start+1 : end], true
 }
 
 func constructorLineMatchesTarget(line, target string) bool {

@@ -1265,3 +1265,37 @@ func TestNonGuiAssignmentConstructorKeepsExplicitWith(t *testing.T) {
 		t.Fatalf("non-gui assignment constructor with:\n%s", got)
 	}
 }
+
+func TestNamedGuiConstructionDropsRedundantAssignment(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushString, operand: &operand{str: "Accordion"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "Accordion"}},
+		{addr: 2, op: opNew},
+		{addr: 3, op: opPushString, operand: &operand{str: "GuiAccordionCtrl"}},
+		{addr: 4, op: opNewObject},
+		{addr: 5, op: opAssign},
+	}, 0, 6, 0)
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, `new GuiAccordionCtrl("Accordion");`) || strings.Contains(got, `"Accordion" = new`) {
+		t.Fatalf("named gui constructor:\n%s", got)
+	}
+}
+
+func TestDynamicNamedGuiConstructionDropsRedundantAssignment(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushString, operand: &operand{str: "Accordion_Panel"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "i"}},
+		{addr: 2, op: opJoin},
+		{addr: 3, op: opPushString, operand: &operand{str: "Accordion_Panel"}},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "i"}},
+		{addr: 5, op: opJoin},
+		{addr: 6, op: opNew},
+		{addr: 7, op: opPushString, operand: &operand{str: "GuiControl"}},
+		{addr: 8, op: opNewObject},
+		{addr: 9, op: opAssign},
+	}, 0, 10, 0)
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, `new GuiControl("Accordion_Panel" @ i);`) || strings.Contains(got, `"Accordion_Panel" @ i = new`) {
+		t.Fatalf("dynamic named gui constructor:\n%s", got)
+	}
+}
