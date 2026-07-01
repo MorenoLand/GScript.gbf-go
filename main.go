@@ -621,10 +621,7 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			stack = append(stack, expr{text: "temp"})
 		case opParams:
 			stack = append(stack, expr{text: "params"})
-		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams, opFunctionStart, opLoopCounter:
-		case opShortCircuitEnd:
-			item := popExpr(&stack)
-			stack = append(stack, expr{text: item.text + " != 0"})
+		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams, opFunctionStart, opLoopCounter, opShortCircuitEnd:
 		case opNew, opWithEnd:
 		case opNewObject:
 			className := popExpr(&stack)
@@ -832,11 +829,20 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			if recoveredLHS, recoveredRHS, ok := recoverNewMultiDimAssignment(lhs, rhs); ok {
 				lhs, rhs = recoveredLHS, recoveredRHS
 			}
+			if recoveredLHS, recoveredRHS, ok := recoverEmbeddedBooleanAssignment(lhs, rhs); ok {
+				lhs, rhs = recoveredLHS, recoveredRHS
+			}
+			if recoveredLHS, recoveredRHS, ok := recoverSwappedBooleanAssignment(lhs, rhs); ok {
+				lhs, rhs = recoveredLHS, recoveredRHS
+			}
 			if isHiddenFunctionBinding(lhs, rhs) {
 				continue
 			}
 			rhs = normalizeAssignmentValue(lhs, rhs)
-			if isNamedGuiConstruction(lhs, rhs) {
+			if isNamedProfileCloneConstruction(lhs, rhs) {
+				arg, _ := constructorExprArg(rhs.text)
+				lines = append(lines, pad(indent)+"new GuiControlProfile("+arg+");")
+			} else if isNamedGuiConstruction(lhs, rhs) {
 				lines = append(lines, pad(indent)+rhs.text+";")
 			} else if isConstructorTarget(lhs, rhs) {
 				lines = append(lines, pad(indent)+"new "+unquoteText(rhs.text)+"("+constructorArg(lhs)+");")
@@ -1710,10 +1716,7 @@ func evalExprRange(code []instruction, start, end int, state *decompileState) (s
 			}
 			stack = append(stack, expr{text: value})
 			pc = newPC
-		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams:
-		case opShortCircuitEnd:
-			item := popExpr(&stack)
-			stack = append(stack, expr{text: item.text + " != 0"})
+		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams, opShortCircuitEnd:
 		case opEndArray:
 			args := collectArgs(&stack)
 			stack = append(stack, expr{text: "{" + strings.Join(args, ", ") + "}"})
@@ -2798,6 +2801,33 @@ func isNamedGuiConstruction(lhs, rhs expr) bool {
 	return strings.TrimSpace(lhs.text) == strings.TrimSpace(arg)
 }
 
+func isNamedProfileCloneConstruction(lhs, rhs expr) bool {
+	if rhs.kind != "object" {
+		return false
+	}
+	className, ok := constructorExprClass(rhs.text)
+	if !ok || strings.HasPrefix(className, "Gui") || !strings.HasSuffix(className, "Profile") {
+		return false
+	}
+	arg, ok := constructorExprArg(rhs.text)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(lhs.text) == strings.TrimSpace(arg)
+}
+
+func constructorExprClass(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "new ") {
+		return "", false
+	}
+	start := strings.Index(trimmed, "(")
+	if start < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(trimmed[:start], "new ")), true
+}
+
 func constructorExprArg(value string) (string, bool) {
 	start := strings.Index(value, "(")
 	end := strings.LastIndex(value, ")")
@@ -2881,6 +2911,37 @@ func recoverNewMultiDimAssignment(lhs, rhs expr) (expr, expr, bool) {
 		out.WriteString("]")
 	}
 	return expr{text: target}, expr{text: out.String()}, true
+}
+
+func recoverSwappedBooleanAssignment(lhs, rhs expr) (expr, expr, bool) {
+	if isAssignableText(lhs.text) || !isAssignableText(rhs.text) {
+		return lhs, rhs, false
+	}
+	if strings.Contains(lhs.text, " || ") || strings.Contains(lhs.text, " && ") {
+		return rhs, lhs, true
+	}
+	return lhs, rhs, false
+}
+
+func recoverEmbeddedBooleanAssignment(lhs, rhs expr) (expr, expr, bool) {
+	target, rest, op, ok := splitBooleanAssignmentHead(lhs.text)
+	if !ok {
+		return lhs, rhs, false
+	}
+	return expr{text: target}, expr{text: target + op + rest + op + rhs.text}, true
+}
+
+func splitBooleanAssignmentHead(value string) (string, string, string, bool) {
+	for _, op := range []string{" || ", " && "} {
+		if idx := strings.Index(value, op); idx > 0 {
+			left := strings.TrimSpace(value[:idx])
+			right := strings.TrimSpace(value[idx+len(op):])
+			if isAssignableText(left) && right != "" {
+				return left, right, op, true
+			}
+		}
+	}
+	return "", "", "", false
 }
 
 func splitNewMultiDim(value string) (string, []string, bool) {

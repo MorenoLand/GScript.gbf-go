@@ -1300,15 +1300,69 @@ func TestDynamicNamedGuiConstructionDropsRedundantAssignment(t *testing.T) {
 	}
 }
 
-func TestInlineConditionalNormalizesTruthiness(t *testing.T) {
+func TestNamedProfileCloneConstructionUsesGuiControlProfile(t *testing.T) {
 	lines := decompileRange([]instruction{
-		{addr: 0, op: opPushVariable, operand: &operand{str: "out"}},
-		{addr: 1, op: opPushVariable, operand: &operand{str: "flag"}},
-		{addr: 2, op: opShortCircuitEnd},
-		{addr: 3, op: opAssign},
-	}, 0, 4, 0)
+		{addr: 0, op: opPushString, operand: &operand{str: "Game_Board_BigButtonProfile"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "Game_Board_BigButtonProfile"}},
+		{addr: 2, op: opNew},
+		{addr: 3, op: opPushString, operand: &operand{str: "Game_Board_ButtonProfile"}},
+		{addr: 4, op: opNewObject},
+		{addr: 5, op: opAssign},
+	}, 0, 6, 0)
 	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, "out = flag != 0;") {
-		t.Fatalf("inline conditional:\n%s", got)
+	if !strings.Contains(got, `new GuiControlProfile("Game_Board_BigButtonProfile");`) || strings.Contains(got, `new Game_Board_ButtonProfile`) {
+		t.Fatalf("profile clone constructor:\n%s", got)
+	}
+}
+
+func TestRecoverSwappedBooleanAssignment(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "visible"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "vis"}},
+		{addr: 2, op: opBoolAnd},
+		{addr: 3, op: opPushVariable, operand: &operand{str: "showing"}},
+		{addr: 4, op: opAssign},
+	}, 0, 5, 0)
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "visible = visible && vis && showing;") || strings.Contains(got, "visible && vis = showing;") {
+		t.Fatalf("swapped boolean assignment:\n%s", got)
+	}
+}
+
+func TestRecoverEmbeddedOrAssignmentTarget(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "temp"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "v2"}},
+		{addr: 2, op: opAccessMember},
+		{addr: 3, op: opPushVariable, operand: &operand{str: "panel"}},
+		{addr: 4, op: opPushString, operand: &operand{str: "Disguise2"}},
+		{addr: 5, op: opEqual},
+		{addr: 6, op: opBoolOr},
+		{addr: 7, op: opPushVariable, operand: &operand{str: "panel"}},
+		{addr: 8, op: opPushString, operand: &operand{str: "Animate2"}},
+		{addr: 9, op: opEqual},
+		{addr: 10, op: opAssign},
+	}, 0, 11, 0)
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, `temp.v2 = temp.v2 || panel == "Disguise2" || panel == "Animate2";`) {
+		t.Fatalf("embedded or assignment:\n%s", got)
+	}
+}
+
+func TestRecoverEmbeddedAndAssignmentTarget(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "visible"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "profilepicture"}},
+		{addr: 2, op: opPushString, operand: &operand{str: ""}},
+		{addr: 3, op: opNotEqual},
+		{addr: 4, op: opBoolAnd},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "profilepicture"}},
+		{addr: 6, op: opPushNumber, operand: &operand{number: 0, kind: "number"}},
+		{addr: 7, op: opNotEqual},
+		{addr: 8, op: opAssign},
+	}, 0, 9, 0)
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, `visible = visible && profilepicture != "" && profilepicture != 0;`) {
+		t.Fatalf("embedded and assignment:\n%s", got)
 	}
 }
