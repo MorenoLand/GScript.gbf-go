@@ -471,6 +471,8 @@ func decompileModule(mod module) string {
 			body = removeRepeatedAssignmentRuns(body)
 			body = recoverForwardGotoGuardsFixedPoint(body)
 			body = recoverForwardIfGotoLoops(body)
+			body = recoverInvertedIfGotoLoops(body)
+			body = recoverLoopGotoContinues(body)
 			body = recoverSleepLoopBlocks(body)
 			chunks = append(chunks, functionSignature(fn.name, fn.params)+" {\n"+strings.Join(body, "\n")+"\n}")
 		}
@@ -483,6 +485,8 @@ func decompileModule(mod module) string {
 	lines = removeRepeatedAssignmentRuns(lines)
 	lines = recoverForwardGotoGuardsFixedPoint(lines)
 	lines = recoverForwardIfGotoLoops(lines)
+	lines = recoverInvertedIfGotoLoops(lines)
+	lines = recoverLoopGotoContinues(lines)
 	lines = recoverSleepLoopBlocks(lines)
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -1089,6 +1093,112 @@ func parseBlockIfLine(line string) (string, bool) {
 	return strings.TrimSuffix(strings.TrimPrefix(trimmed, "if ("), ") {"), true
 }
 
+func recoverInvertedIfGotoLoops(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		initLine := strings.TrimSpace(lines[i])
+		if !strings.HasSuffix(initLine, ";") || !strings.Contains(initLine, " = ") {
+			out = append(out, lines[i])
+			continue
+		}
+		indent := parseLineIndent(lines[i])
+		parts := strings.SplitN(strings.TrimSuffix(initLine, ";"), " = ", 2)
+		loopVar := parts[0]
+		if loopVar == "" {
+			out = append(out, lines[i])
+			continue
+		}
+		condIdx := -1
+		condition := ""
+		for j := i + 1; j < len(lines) && j <= i+8; j++ {
+			if parseLineIndent(lines[j]) != indent {
+				continue
+			}
+			cond, ok := parseBlockIfLine(lines[j])
+			if ok && strings.HasPrefix(cond, "!(") && strings.HasSuffix(cond, ")") && strings.Contains(cond, loopVar) {
+				condIdx = j
+				condition = strings.TrimSuffix(strings.TrimPrefix(cond, "!("), ")")
+				break
+			}
+		}
+		if condIdx < 0 {
+			out = append(out, lines[i])
+			continue
+		}
+		blockEnd := matchingBlockEnd(lines, condIdx)
+		if blockEnd < 0 {
+			out = append(out, lines[i])
+			continue
+		}
+		incIdx := -1
+		incText := ""
+		for j := blockEnd + 1; j+1 < len(lines) && j <= blockEnd+12; j++ {
+			incVar, inc, ok := parseLoopIncrement(lines[j])
+			if ok && incVar == loopVar && isGotoLine(strings.TrimSpace(lines[j+1])) {
+				incIdx = j
+				incText = inc
+				break
+			}
+		}
+		if incIdx < 0 {
+			out = append(out, lines[i])
+			continue
+		}
+		out = append(out, strings.Repeat(" ", indent)+"for ("+initLine[:len(initLine)-1]+"; "+condition+"; "+incText+") {")
+		for _, line := range lines[i+1 : condIdx] {
+			out = append(out, reindentBlockLine(line, indent, indent+2))
+		}
+		for _, line := range lines[condIdx+1 : blockEnd] {
+			out = append(out, line)
+		}
+		for _, line := range lines[blockEnd+1 : incIdx] {
+			out = append(out, line)
+		}
+		out = append(out, strings.Repeat(" ", indent)+"}")
+		i = incIdx + 1
+	}
+	return out
+}
+
+func recoverLoopGotoContinues(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if !(strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "while ")) || !strings.HasSuffix(trimmed, "{") {
+			out = append(out, lines[i])
+			continue
+		}
+		end := matchingBlockEnd(lines, i)
+		if end < 0 {
+			out = append(out, lines[i])
+			continue
+		}
+		out = append(out, lines[i])
+		body := recoverLoopGotoContinues(lines[i+1 : end])
+		for _, line := range body {
+			converted := convertGotoToContinue(line)
+			out = append(out, converted...)
+		}
+		out = append(out, lines[end])
+		i = end
+	}
+	return out
+}
+
+func convertGotoToContinue(line string) []string {
+	indent := parseLineIndent(line)
+	trimmed := strings.TrimSpace(line)
+	if isGotoLine(trimmed) {
+		return []string{strings.Repeat(" ", indent) + "continue;"}
+	}
+	cond, _, _, ok := parseGotoIfLine(line)
+	if !ok {
+		return []string{line}
+	}
+	prefix := strings.Repeat(" ", indent)
+	return []string{prefix + "if (" + cond + ") {", prefix + "  continue;", prefix + "}"}
+}
+
 func recoverWhileLoop(body []string, condition string, pc int, indent int) ([]string, bool) {
 	if len(body) == 0 {
 		return nil, false
@@ -1548,7 +1658,11 @@ func parseTailDispatchCases(code []instruction, pc, end int, state *decompileSta
 			break
 		}
 		caseTarget := jumpTarget(jump)
-		if caseTarget < 0 || caseTarget >= pc {
+		if caseTarget >= pc {
+			pos += 4
+			continue
+		}
+		if caseTarget < 0 {
 			break
 		}
 		condition := selector + " == " + lit

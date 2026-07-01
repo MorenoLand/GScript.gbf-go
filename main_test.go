@@ -395,6 +395,43 @@ func TestRecoverForwardIfGotoLoops(t *testing.T) {
 	}
 }
 
+func TestRecoverLoopGotoContinues(t *testing.T) {
+	lines := recoverLoopGotoContinues([]string{
+		`  for (temp.i = 0; temp.i < 7; temp.i += 1) {`,
+		`    if (temp.i == 0) {`,
+		`      if (temp.look == this.game.characterindex) goto label_10723;`,
+		`    }`,
+		`    if (temp.index in this.playerstatsindices) {`,
+		`      goto label_10723;`,
+		`    }`,
+		`  }`,
+	})
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, "if (temp.look == this.game.characterindex) {\n        continue;\n      }") || !strings.Contains(got, "continue;") {
+		t.Fatalf("loop goto continue:\n%s", got)
+	}
+}
+
+func TestRecoverInvertedIfGotoLoops(t *testing.T) {
+	lines := recoverInvertedIfGotoLoops([]string{
+		`      temp.i = 0;`,
+		`      if (data.taker == 2) {`,
+		`      }`,
+		`      if (!(temp.i < 1)) {`,
+		`        temp.object = new GuiShowImgCtrl() {`,
+		`          profile = Game_Cards_BackProfile;`,
+		`        }`,
+		`      }`,
+		`      addcontrol(temp.object);`,
+		`      temp.i += 1;`,
+		`      goto label_6953;`,
+	})
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, "for (temp.i = 0; temp.i < 1; temp.i += 1)") || !strings.Contains(got, "addcontrol(temp.object);") {
+		t.Fatalf("inverted if goto loop:\n%s", got)
+	}
+}
+
 func TestRecoverWhileLoopWithSleep(t *testing.T) {
 	lines := decompileRange([]instruction{
 		{addr: 0, op: opPushTrue},
@@ -596,6 +633,41 @@ func TestRecoverForwardDispatchSubstringSelector(t *testing.T) {
 	got := strings.Join(lines, "\n")
 	if strings.Contains(got, "goto label_") || !strings.Contains(got, `temp.switchvalue = obj.buttonname.substring(0, 1);`) || !strings.Contains(got, `if (temp.switchvalue == "T")`) || !strings.Contains(got, `x = "Top";`) {
 		t.Fatalf("substring selector dispatch:\n%s", got)
+	}
+}
+
+func TestRecoverTailDispatchSkipsNoOpCases(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opPushString, operand: &operand{str: "open.wav", kind: "string"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "play"}},
+		{addr: 2, op: opCall},
+		{addr: 3, op: opPop},
+		{addr: 4, op: opJmp, operand: &operand{number: 17, kind: "number"}},
+		{addr: 5, op: opPushString, operand: &operand{str: "win.wav", kind: "string"}},
+		{addr: 6, op: opPushVariable, operand: &operand{str: "play"}},
+		{addr: 7, op: opCall},
+		{addr: 8, op: opPop},
+		{addr: 9, op: opJmp, operand: &operand{number: 17, kind: "number"}},
+		{addr: 10, op: opPushVariable, operand: &operand{str: "sound"}},
+		{addr: 11, op: opCopy},
+		{addr: 12, op: opPushString, operand: &operand{str: "play", kind: "string"}},
+		{addr: 13, op: opEqual},
+		{addr: 14, op: opJeq, operand: &operand{number: 17, kind: "number"}},
+		{addr: 15, op: opCopy},
+		{addr: 16, op: opPushString, operand: &operand{str: "windowopen", kind: "string"}},
+		{addr: 17, op: opEqual},
+		{addr: 18, op: opJeq, operand: &operand{number: 0, kind: "number"}},
+		{addr: 19, op: opCopy},
+		{addr: 20, op: opPushString, operand: &operand{str: "win", kind: "string"}},
+		{addr: 21, op: opEqual},
+		{addr: 22, op: opJeq, operand: &operand{number: 5, kind: "number"}},
+		{addr: 23, op: opPop},
+		{addr: 24, op: opRet},
+	}
+	lines := decompileRange(code, 10, len(code), 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, `if (sound == "windowopen")`) || !strings.Contains(got, `else if (sound == "win")`) {
+		t.Fatalf("tail dispatch no-op cases:\n%s", got)
 	}
 }
 
