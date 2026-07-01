@@ -1167,3 +1167,27 @@ func TestRecoverSelfTernaryAssignmentBranch(t *testing.T) {
 		t.Fatalf("self ternary assignment:\n%s", got)
 	}
 }
+
+func TestRecoverNestedTernaryAssignmentBranch(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "text"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "lang"}},
+		{addr: 2, op: opPushString, operand: &operand{str: "en"}},
+		{addr: 3, op: opEqual},
+		{addr: 4, op: opJne, operand: &operand{number: 7, kind: "number"}},
+		{addr: 5, op: opPushString, operand: &operand{str: "English"}},
+		{addr: 6, op: opJmp, operand: &operand{number: 14, kind: "number"}},
+		{addr: 7, op: opPushVariable, operand: &operand{str: "lang"}},
+		{addr: 8, op: opPushString, operand: &operand{str: "de"}},
+		{addr: 9, op: opEqual},
+		{addr: 10, op: opJne, operand: &operand{number: 13, kind: "number"}},
+		{addr: 11, op: opPushString, operand: &operand{str: "German"}},
+		{addr: 12, op: opJmp, operand: &operand{number: 14, kind: "number"}},
+		{addr: 13, op: opPushString, operand: &operand{str: "French"}},
+		{addr: 14, op: opAssign},
+	}, 0, 15, 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "{\n}") || !strings.Contains(got, `else if (lang == "de")`) || !strings.Contains(got, `text = "French";`) {
+		t.Fatalf("nested ternary assignment:\n%s", got)
+	}
+}

@@ -847,6 +847,12 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 		case opJne, opJeq:
 			target := jumpTarget(ins)
 			condition := popExpr(&stack).text
+			if assignLines, newPC, ok := recoverConditionalAssignmentChain(code, pc, target, end, indent, state, condition, ins.op, stack); ok {
+				lines = append(lines, assignLines...)
+				stack = stack[:len(stack)-1]
+				pc = newPC
+				continue
+			}
 			if assignLines, newPC, ok := recoverTernaryAssignment(code, pc, target, end, indent, state, condition, ins.op, stack); ok {
 				lines = append(lines, assignLines...)
 				stack = stack[:len(stack)-1]
@@ -861,12 +867,6 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			}
 			if value, newPC, ok := recoverTernaryExpression(code, pc, target, end, state, condition, ins.op); ok {
 				stack = append(stack, expr{text: value})
-				pc = newPC
-				continue
-			}
-			if assignLines, newPC, ok := recoverConditionalAssignmentChain(code, pc, target, end, indent, state, condition, ins.op, stack); ok {
-				lines = append(lines, assignLines...)
-				stack = stack[:len(stack)-1]
 				pc = newPC
 				continue
 			}
@@ -1692,6 +1692,15 @@ func evalExprRange(code []instruction, start, end int, state *decompileState) (s
 				}
 			}
 			stack = append(stack, expr{text: fmt.Sprintf("reg%d", id)})
+		case opJne, opJeq:
+			target := jumpTarget(ins)
+			condition := popExpr(&stack).text
+			value, newPC, ok := recoverTernaryExpression(code, pc, target, end, state, condition, ins.op)
+			if !ok {
+				return "", false
+			}
+			stack = append(stack, expr{text: value})
+			pc = newPC
 		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams:
 		case opEndArray:
 			args := collectArgs(&stack)
