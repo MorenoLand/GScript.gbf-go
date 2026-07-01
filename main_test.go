@@ -1101,3 +1101,29 @@ func TestRecoverLoopEmptyIfContinues(t *testing.T) {
 		t.Fatalf("empty if continue:\n%s", got)
 	}
 }
+
+func TestRecoverTernaryAssignmentBranch(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "state"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "anibody"}},
+		{addr: 2, op: opAccessMember},
+		{addr: 3, op: opPushVariable, operand: &operand{str: "field"}},
+		{addr: 4, op: opPushNumber, operand: &operand{number: 0, kind: "number"}},
+		{addr: 5, op: opArrayAccess},
+		{addr: 6, op: opConvertToFloat},
+		{addr: 7, op: opJne, operand: &operand{number: 12, kind: "number"}},
+		{addr: 8, op: opPushVariable, operand: &operand{str: "field"}},
+		{addr: 9, op: opPushNumber, operand: &operand{number: 0, kind: "number"}},
+		{addr: 10, op: opArrayAccess},
+		{addr: 11, op: opJmp, operand: &operand{number: 16, kind: "number"}},
+		{addr: 12, op: opPushVariable, operand: &operand{str: "defaults"}},
+		{addr: 13, op: opPushString, operand: &operand{str: "Body"}},
+		{addr: 14, op: opAccessMember},
+		{addr: 15, op: opConvertToObject},
+		{addr: 16, op: opAssign},
+	}, 0, 17, 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "{\n}") || !strings.Contains(got, "state.anibody = field[0];") || !strings.Contains(got, "state.anibody = defaults.Body;") {
+		t.Fatalf("ternary assignment:\n%s", got)
+	}
+}

@@ -847,6 +847,12 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 		case opJne, opJeq:
 			target := jumpTarget(ins)
 			condition := popExpr(&stack).text
+			if assignLines, newPC, ok := recoverTernaryAssignment(code, pc, target, end, indent, state, condition, ins.op, stack); ok {
+				lines = append(lines, assignLines...)
+				stack = stack[:len(stack)-1]
+				pc = newPC
+				continue
+			}
 			if assignLines, newPC, ok := recoverConditionalAssignmentChain(code, pc, target, end, indent, state, condition, ins.op, stack); ok {
 				lines = append(lines, assignLines...)
 				stack = stack[:len(stack)-1]
@@ -1491,6 +1497,37 @@ func recoverBackwardDispatch(code []instruction, pc, target, end, indent int, st
 type conditionalAssignmentCase struct {
 	condition string
 	value     string
+}
+
+func recoverTernaryAssignment(code []instruction, pc, target, end, indent int, state *decompileState, condition string, branchOp opcode, stack []expr) ([]string, int, bool) {
+	if len(stack) == 0 || target <= pc+1 || target >= end || code[target-1].op != opJmp {
+		return nil, 0, false
+	}
+	common := jumpTarget(code[target-1])
+	if common <= target || common >= end || code[common].op != opAssign {
+		return nil, 0, false
+	}
+	trueValue, ok := evalExprRange(code, pc+1, target-1, state)
+	if !ok {
+		return nil, 0, false
+	}
+	falseValue, ok := evalExprRange(code, target, common, state)
+	if !ok {
+		return nil, 0, false
+	}
+	if branchOp == opJeq {
+		trueValue, falseValue = falseValue, trueValue
+	}
+	lhs := stack[len(stack)-1].text
+	lines := []string{
+		pad(indent) + "if (" + condition + ") {",
+		pad(indent+1) + lhs + " = " + trueValue + ";",
+		pad(indent) + "}",
+		pad(indent) + "else {",
+		pad(indent+1) + lhs + " = " + falseValue + ";",
+		pad(indent) + "}",
+	}
+	return lines, common, true
 }
 
 func recoverConditionalAssignmentChain(code []instruction, pc, target, end, indent int, state *decompileState, firstCondition string, firstOp opcode, stack []expr) ([]string, int, bool) {
@@ -2572,7 +2609,31 @@ func memberName(s string) string {
 	if strings.Contains(s, " @ ") && !(strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")")) {
 		return "(" + s + ")"
 	}
+	if len(s) >= 2 && strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"") {
+		name := strings.Trim(s, "\"")
+		if isIdentifier(name) {
+			return name
+		}
+	}
 	return s
+}
+
+func isIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if i == 0 {
+			if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z') {
+				return false
+			}
+			continue
+		}
+		if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func popExpr(stack *[]expr) expr {
