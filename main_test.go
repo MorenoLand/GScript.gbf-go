@@ -1087,3 +1087,17 @@ func TestPendingObjectCallStatementIsEmitted(t *testing.T) {
 		t.Fatalf("pending object call:\n%s", got)
 	}
 }
+
+func TestRecoverLoopEmptyIfContinues(t *testing.T) {
+	lines := recoverLoopGotoContinues([]string{
+		`  for (temp.i = 0; temp.i < this.count; temp.i += 1) {`,
+		`    if (!(("Obj_" @ temp.i).visible)) {`,
+		`    }`,
+		`    doWork(temp.i);`,
+		`  }`,
+	})
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "{\n    }") || !strings.Contains(got, "continue;") {
+		t.Fatalf("empty if continue:\n%s", got)
+	}
+}

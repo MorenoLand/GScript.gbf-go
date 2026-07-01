@@ -1180,8 +1180,13 @@ func recoverLoopGotoContinues(lines []string) []string {
 		}
 		out = append(out, lines[i])
 		body := recoverLoopGotoContinues(lines[i+1 : end])
-		for _, line := range body {
-			converted := convertGotoToContinue(line)
+		for j := 0; j < len(body); j++ {
+			if converted, next, ok := convertEmptyIfToContinue(body, j); ok {
+				out = append(out, converted...)
+				j = next
+				continue
+			}
+			converted := convertGotoToContinue(body[j])
 			out = append(out, converted...)
 		}
 		out = append(out, lines[end])
@@ -1202,6 +1207,19 @@ func convertGotoToContinue(line string) []string {
 	}
 	prefix := strings.Repeat(" ", indent)
 	return []string{prefix + "if (" + cond + ") {", prefix + "  continue;", prefix + "}"}
+}
+
+func convertEmptyIfToContinue(lines []string, index int) ([]string, int, bool) {
+	if index+1 >= len(lines) {
+		return nil, 0, false
+	}
+	cond, ok := parseBlockIfLine(lines[index])
+	if !ok || strings.TrimSpace(lines[index+1]) != "}" || parseLineIndent(lines[index+1]) != parseLineIndent(lines[index]) {
+		return nil, 0, false
+	}
+	indent := parseLineIndent(lines[index])
+	prefix := strings.Repeat(" ", indent)
+	return []string{prefix + "if (" + cond + ") {", prefix + "  continue;", prefix + "}"}, index + 1, true
 }
 
 func recoverWhileLoop(body []string, condition string, pc int, indent int) ([]string, bool) {
