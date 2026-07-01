@@ -1299,3 +1299,16 @@ func TestDynamicNamedGuiConstructionDropsRedundantAssignment(t *testing.T) {
 		t.Fatalf("dynamic named gui constructor:\n%s", got)
 	}
 }
+
+func TestInlineConditionalNormalizesTruthiness(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "out"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "flag"}},
+		{addr: 2, op: opShortCircuitEnd},
+		{addr: 3, op: opAssign},
+	}, 0, 4, 0)
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "out = flag != 0;") {
+		t.Fatalf("inline conditional:\n%s", got)
+	}
+}

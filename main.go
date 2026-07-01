@@ -621,7 +621,10 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			stack = append(stack, expr{text: "temp"})
 		case opParams:
 			stack = append(stack, expr{text: "params"})
-		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams, opFunctionStart, opLoopCounter, opShortCircuitEnd:
+		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams, opFunctionStart, opLoopCounter:
+		case opShortCircuitEnd:
+			item := popExpr(&stack)
+			stack = append(stack, expr{text: item.text + " != 0"})
 		case opNew, opWithEnd:
 		case opNewObject:
 			className := popExpr(&stack)
@@ -1708,6 +1711,9 @@ func evalExprRange(code []instruction, start, end int, state *decompileState) (s
 			stack = append(stack, expr{text: value})
 			pc = newPC
 		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams:
+		case opShortCircuitEnd:
+			item := popExpr(&stack)
+			stack = append(stack, expr{text: item.text + " != 0"})
 		case opEndArray:
 			args := collectArgs(&stack)
 			stack = append(stack, expr{text: "{" + strings.Join(args, ", ") + "}"})
