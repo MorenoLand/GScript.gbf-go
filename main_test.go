@@ -567,6 +567,38 @@ func TestRecoverForwardDispatchInfixSelector(t *testing.T) {
 	}
 }
 
+func TestRecoverForwardDispatchSubstringSelector(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 5, kind: "number"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "x"}},
+		{addr: 2, op: opPushString, operand: &operand{str: "Top", kind: "string"}},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opJmp, operand: &operand{number: 21, kind: "number"}},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "obj"}},
+		{addr: 6, op: opPushVariable, operand: &operand{str: "buttonname"}},
+		{addr: 7, op: opAccessMember},
+		{addr: 8, op: opConvertToString},
+		{addr: 9, op: opPushNumber, operand: &operand{number: 0, kind: "number"}},
+		{addr: 10, op: opPushNumber, operand: &operand{number: 1, kind: "number"}},
+		{addr: 11, op: opObjSubstring},
+		{addr: 12, op: opCopy},
+		{addr: 13, op: opPushString, operand: &operand{str: "T", kind: "string"}},
+		{addr: 14, op: opEqual},
+		{addr: 15, op: opJeq, operand: &operand{number: 1, kind: "number"}},
+		{addr: 16, op: opPushVariable, operand: &operand{str: "x"}},
+		{addr: 17, op: opPushString, operand: &operand{str: "Width", kind: "string"}},
+		{addr: 18, op: opAssign},
+		{addr: 19, op: opJmp, operand: &operand{number: 21, kind: "number"}},
+		{addr: 20, op: opJmp, operand: &operand{number: 16, kind: "number"}},
+		{addr: 21, op: opPop},
+	}
+	lines := decompileRange(code, 0, len(code), 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, `temp.switchvalue = obj.buttonname.substring(0, 1);`) || !strings.Contains(got, `if (temp.switchvalue == "T")`) || !strings.Contains(got, `x = "Top";`) {
+		t.Fatalf("substring selector dispatch:\n%s", got)
+	}
+}
+
 func TestRecoverForwardDispatchCaseAfterTable(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opJmp, operand: &operand{number: 3, kind: "number"}},

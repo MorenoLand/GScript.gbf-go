@@ -1660,6 +1660,8 @@ func dispatchSelector(code []instruction, target int, state *decompileState) (st
 		case opConvertToFloat, opConvertToString, opConvertToObject, opConvertToVar, opEndParams:
 		case opCall:
 			stack = append(stack, expr{text: buildCall(&stack), kind: "call"})
+		case opObjSubstring:
+			stack = append(stack, objectCall(&stack, "substring", 2, false))
 		case opInt:
 			stack = append(stack, functionCall(&stack, "int", 1))
 		case opRandom:
