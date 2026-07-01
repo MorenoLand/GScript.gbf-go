@@ -1200,7 +1200,27 @@ func TestRecoverNonGuiConstructorTarget(t *testing.T) {
 		{addr: 3, op: opAssign},
 	}, 0, 4, 0)
 	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, `new TStaticVar("SinglePlayerTable");`) || strings.Contains(got, `"SinglePlayerTable" = "TStaticVar";`) {
+	if !strings.Contains(got, `SinglePlayerTable = new TStaticVar();`) || strings.Contains(got, `"SinglePlayerTable" = "TStaticVar";`) {
 		t.Fatalf("non-gui constructor:\n%s", got)
+	}
+}
+
+func TestConstructorAssignmentDoesNotAbsorbDifferentWithTarget(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushString, operand: &operand{str: "SinglePlayerTable"}},
+		{addr: 1, op: opPushString, operand: &operand{str: "TStaticVar"}},
+		{addr: 2, op: opNewObject},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opPushVariable, operand: &operand{str: "this"}},
+		{addr: 5, op: opPushString, operand: &operand{str: "singletable"}},
+		{addr: 6, op: opAccessMember},
+		{addr: 7, op: opWith, operand: &operand{number: 11, kind: "number"}},
+		{addr: 8, op: opPushVariable, operand: &operand{str: "this"}},
+		{addr: 9, op: opPushString, operand: &operand{str: "_parent"}},
+		{addr: 10, op: opAssignMember},
+	}, 0, 11, 0)
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, `SinglePlayerTable = new TStaticVar();`) || !strings.Contains(got, `with (this.singletable)`) || strings.Contains(got, `SinglePlayerTable = new TStaticVar() {`) {
+		t.Fatalf("constructor absorbed unrelated with:\n%s", got)
 	}
 }

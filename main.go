@@ -639,7 +639,8 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			}
 		case opWith:
 			target := jumpTarget(ins)
-			if target > pc && target <= end && len(lines) > 0 && isConstructorLine(lines[len(lines)-1]) {
+			targetExpr := popExpr(&stack)
+			if target > pc && target <= end && len(lines) > 0 && isConstructorLine(lines[len(lines)-1]) && constructorLineMatchesTarget(lines[len(lines)-1], targetExpr.text) {
 				assignmentConstructor := isAssignmentConstructorLine(lines[len(lines)-1])
 				lines[len(lines)-1] = strings.TrimSuffix(lines[len(lines)-1], ";") + " {"
 				lines = append(lines, decompileRangeWithState(code, pc+1, target, indent+1, state)...)
@@ -650,7 +651,6 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 				lines = append(lines, pad(indent)+close)
 				pc = target - 1
 			} else if target > pc && target <= end {
-				targetExpr := popExpr(&stack)
 				lines = append(lines, pad(indent)+"with ("+targetExpr.text+") {")
 				lines = append(lines, decompileRangeWithState(code, pc+1, target, indent+1, state)...)
 				lines = append(lines, pad(indent)+"}")
@@ -833,6 +833,8 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			rhs = normalizeAssignmentValue(lhs, rhs)
 			if isConstructorTarget(lhs, rhs) {
 				lines = append(lines, pad(indent)+"new "+unquoteText(rhs.text)+"("+constructorArg(lhs)+");")
+			} else if rhs.kind == "class" {
+				lines = append(lines, pad(indent)+classAssignmentTarget(lhs)+" = new "+unquoteText(rhs.text)+"();")
 			} else {
 				lines = append(lines, pad(indent)+lhs.text+" = "+rhs.text+";")
 			}
@@ -2772,6 +2774,22 @@ func isAssignmentConstructorLine(line string) bool {
 	return strings.Contains(trimmed, " = new ") && strings.HasSuffix(trimmed, ");")
 }
 
+func constructorLineMatchesTarget(line, target string) bool {
+	if target == "/* missing */" {
+		return true
+	}
+	trimmed := strings.TrimSpace(strings.TrimSuffix(line, ";"))
+	if strings.HasPrefix(trimmed, "new ") {
+		start := strings.Index(trimmed, "(")
+		end := strings.LastIndex(trimmed, ")")
+		return start >= 0 && end > start && unquoteText(trimmed[start+1:end]) == unquoteText(target)
+	}
+	if idx := strings.Index(trimmed, " = new "); idx > 0 {
+		return strings.TrimSpace(trimmed[:idx]) == target
+	}
+	return false
+}
+
 func recoverFormatAssignment(lhs, rhs expr) (expr, expr, bool) {
 	if lhs.text != "/* missing */" || !strings.HasPrefix(rhs.text, "format(") || !strings.HasSuffix(rhs.text, ")") {
 		return lhs, rhs, false
@@ -2953,7 +2971,14 @@ func isObjectNameExpr(value expr) bool {
 }
 
 func isConstructorTarget(lhs, rhs expr) bool {
-	return rhs.kind == "class" && lhs.text != "" && lhs.text != "/* missing */"
+	return rhs.kind == "class" && strings.HasPrefix(unquoteText(rhs.text), "Gui") && lhs.text != "" && lhs.text != "/* missing */"
+}
+
+func classAssignmentTarget(value expr) string {
+	if value.kind == "string" {
+		return unquoteText(value.text)
+	}
+	return value.text
 }
 
 func constructorArg(value expr) string {
