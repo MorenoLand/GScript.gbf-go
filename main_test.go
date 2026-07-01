@@ -331,6 +331,36 @@ func TestRecoverForwardGotoGuardsReturnStatement(t *testing.T) {
 	}
 }
 
+func TestRecoverForwardGotoGuardsUsesMatchingBlock(t *testing.T) {
+	lines := recoverForwardGotoGuards([]string{
+		`    if (thiso.current.background != 0) goto label_6329;`,
+		`    if (!(thiso.current.background != "")) {`,
+		`      return thiso.current.background;`,
+		`    }`,
+		`  }`,
+		`  else if (panel == "Animate2") {`,
+	})
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, `if (!(thiso.current.background != 0)) {`) || !strings.Contains(got, `else if (panel == "Animate2") {`) {
+		t.Fatalf("matching block guard:\n%s", got)
+	}
+}
+
+func TestRecoverForwardGotoGuardsFixedPoint(t *testing.T) {
+	lines := recoverForwardGotoGuardsFixedPoint([]string{
+		`  if (panel == "Disguise2") {`,
+		`    if (thiso.current.background != 0) goto label_6329;`,
+		`    if (!(thiso.current.background != "")) {`,
+		`      return thiso.current.background;`,
+		`    }`,
+		`  }`,
+	})
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, `if (!(thiso.current.background != 0)) {`) {
+		t.Fatalf("fixed point guard:\n%s", got)
+	}
+}
+
 func TestRecoverForLoopWithAssignmentIncrement(t *testing.T) {
 	lines, ok := recoverForLoop(
 		[]string{"temp.i = 90;"},

@@ -469,7 +469,7 @@ func decompileModule(mod module) string {
 			body = recoverProfileCloneBlocks(body)
 			body = recoverBareConstructorBlocks(body)
 			body = removeRepeatedAssignmentRuns(body)
-			body = recoverForwardGotoGuards(body)
+			body = recoverForwardGotoGuardsFixedPoint(body)
 			body = recoverSleepLoopBlocks(body)
 			chunks = append(chunks, functionSignature(fn.name, fn.params)+" {\n"+strings.Join(body, "\n")+"\n}")
 		}
@@ -480,7 +480,7 @@ func decompileModule(mod module) string {
 	lines = recoverProfileCloneBlocks(lines)
 	lines = recoverBareConstructorBlocks(lines)
 	lines = removeRepeatedAssignmentRuns(lines)
-	lines = recoverForwardGotoGuards(lines)
+	lines = recoverForwardGotoGuardsFixedPoint(lines)
 	lines = recoverSleepLoopBlocks(lines)
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -2004,18 +2004,26 @@ func recoverForwardGotoGuards(lines []string) []string {
 	return out
 }
 
+func recoverForwardGotoGuardsFixedPoint(lines []string) []string {
+	for i := 0; i < 4; i++ {
+		next := recoverForwardGotoGuards(lines)
+		if strings.Join(next, "\n") == strings.Join(lines, "\n") {
+			return next
+		}
+		lines = next
+	}
+	return lines
+}
+
 func forwardGuardBlockEnd(lines []string, start, indent int) (int, bool) {
 	if start >= len(lines) || parseLineIndent(lines[start]) != indent || !strings.HasSuffix(strings.TrimSpace(lines[start]), "{") {
 		return 0, false
 	}
-	end := start
-	for end < len(lines) {
-		if end > start && parseLineIndent(lines[end]) < indent {
-			break
-		}
-		end++
+	end := matchingBlockEnd(lines, start)
+	if end < 0 {
+		return 0, false
 	}
-	return end, end > start
+	return end + 1, end > start
 }
 
 func parseGotoIfLine(line string) (string, int, int, bool) {
