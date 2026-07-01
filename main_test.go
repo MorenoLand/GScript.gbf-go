@@ -301,6 +301,24 @@ func TestRecoverForwardGotoGuards(t *testing.T) {
 	}
 }
 
+func TestRecoverForwardGotoGuardsNestedSimpleStatement(t *testing.T) {
+	lines := recoverForwardGotoGuards([]string{
+		`    if (client.disablesounds) goto label_12000;`,
+		`    if (this.game.gamename == "SoulBubbles") {`,
+		`      if (goright) {`,
+		`        if (!newmenu in {21, 16}) goto label_11986;`,
+		`        play("soulbubbles_select.wav");`,
+		`      }`,
+		`      if (newmenu != 0) goto label_11986;`,
+		`      play("soulbubbles_back.wav");`,
+		`    }`,
+	})
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, `if (!(!newmenu in {21, 16})) {`) || !strings.Contains(got, `if (!(newmenu != 0)) {`) {
+		t.Fatalf("nested forward goto guard:\n%s", got)
+	}
+}
+
 func TestRecoverForLoopWithAssignmentIncrement(t *testing.T) {
 	lines, ok := recoverForLoop(
 		[]string{"temp.i = 90;"},

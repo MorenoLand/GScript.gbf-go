@@ -1970,7 +1970,7 @@ func recoverForwardGotoGuards(lines []string) []string {
 		}
 		if blockEnd, ok := forwardGuardBlockEnd(lines, i+1, indent); ok {
 			out = append(out, strings.Repeat(" ", indent)+"if (!("+cond+")) {")
-			for _, line := range lines[i+1 : blockEnd] {
+			for _, line := range recoverForwardGotoGuards(lines[i+1:blockEnd]) {
 				out = append(out, reindentBlockLine(line, indent, indent+2))
 			}
 			out = append(out, strings.Repeat(" ", indent)+"}")
