@@ -1664,6 +1664,9 @@ func dispatchSelector(code []instruction, target int, state *decompileState) (st
 			stack = append(stack, functionCall(&stack, "int", 1))
 		case opRandom:
 			stack = append(stack, functionCall(&stack, "random", 2))
+		case opAdd, opSubtract, opMultiply, opDivide, opModulo, opPower, opBoolAnd, opBoolOr, opEqual, opNotEqual, opLessThan, opGreaterThan, opLE, opGE, opBitwiseOr, opBitwiseAnd, opBitwiseXor, opShiftLeft, opShiftRight, opIn, opJoin, opAppend:
+			rhs, lhs := popExpr(&stack), popExpr(&stack)
+			stack = append(stack, expr{text: lhs.text + " " + infix(ins.op) + " " + rhs.text})
 		case opAccessMember:
 			rhs, lhs := popExpr(&stack), popExpr(&stack)
 			stack = append(stack, expr{text: memberBase(lhs.text) + "." + memberName(rhs.text)})

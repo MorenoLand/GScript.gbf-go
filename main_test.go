@@ -539,6 +539,34 @@ func TestRecoverForwardDispatchComputedSelector(t *testing.T) {
 	}
 }
 
+func TestRecoverForwardDispatchInfixSelector(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 5, kind: "number"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "out"}},
+		{addr: 2, op: opPushString, operand: &operand{str: "record", kind: "string"}},
+		{addr: 3, op: opAssign},
+		{addr: 4, op: opJmp, operand: &operand{number: 17, kind: "number"}},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "state"}},
+		{addr: 6, op: opPushNumber, operand: &operand{number: 7, kind: "number"}},
+		{addr: 7, op: opBitwiseAnd},
+		{addr: 8, op: opCopy},
+		{addr: 9, op: opPushNumber, operand: &operand{number: 2, kind: "number"}},
+		{addr: 10, op: opEqual},
+		{addr: 11, op: opJeq, operand: &operand{number: 1, kind: "number"}},
+		{addr: 12, op: opPushVariable, operand: &operand{str: "out"}},
+		{addr: 13, op: opPushString, operand: &operand{str: "idle", kind: "string"}},
+		{addr: 14, op: opAssign},
+		{addr: 15, op: opJmp, operand: &operand{number: 17, kind: "number"}},
+		{addr: 16, op: opJmp, operand: &operand{number: 12, kind: "number"}},
+		{addr: 17, op: opPop},
+	}
+	lines := decompileRange(code, 0, len(code), 0)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "goto label_") || !strings.Contains(got, "if (state & 7 == 2)") || !strings.Contains(got, `out = "record";`) {
+		t.Fatalf("infix selector dispatch:\n%s", got)
+	}
+}
+
 func TestRecoverForwardDispatchCaseAfterTable(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opJmp, operand: &operand{number: 3, kind: "number"}},
