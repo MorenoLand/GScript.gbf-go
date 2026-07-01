@@ -319,6 +319,18 @@ func TestRecoverForwardGotoGuardsNestedSimpleStatement(t *testing.T) {
 	}
 }
 
+func TestRecoverForwardGotoGuardsReturnStatement(t *testing.T) {
+	lines := recoverForwardGotoGuards([]string{
+		`    if (temp.stacksize <= 0) goto label_6250;`,
+		`    return 0;`,
+	})
+	got := strings.Join(lines, "\n")
+	want := "    if (!(temp.stacksize <= 0)) {\n      return 0;\n    }"
+	if got != want {
+		t.Fatalf("return forward goto guard:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestRecoverForLoopWithAssignmentIncrement(t *testing.T) {
 	lines, ok := recoverForLoop(
 		[]string{"temp.i = 90;"},

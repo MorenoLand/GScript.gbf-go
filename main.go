@@ -2026,7 +2026,7 @@ func isSimpleStatementLine(line string, indent int) bool {
 		return false
 	}
 	trimmed := strings.TrimSpace(line)
-	return strings.HasSuffix(trimmed, ";") && !strings.HasPrefix(trimmed, "goto label_") && !strings.HasPrefix(trimmed, "if ") && !strings.HasPrefix(trimmed, "for ") && !strings.HasPrefix(trimmed, "return")
+	return strings.HasSuffix(trimmed, ";") && !strings.HasPrefix(trimmed, "goto label_") && !strings.HasPrefix(trimmed, "if ") && !strings.HasPrefix(trimmed, "for ")
 }
 
 func recoverSleepLoopBlocks(lines []string) []string {
