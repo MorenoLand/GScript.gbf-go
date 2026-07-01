@@ -888,6 +888,8 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 			} else if skipsEmbeddedFunction(state.skip, pc+1, target) {
 			} else if target == end {
 				pc = end - 1
+			} else if target > pc && target <= end && isJumpPadding(code, pc+1, target) {
+				pc = target - 1
 			} else if target < end {
 				lines = append(lines, pad(indent)+fmt.Sprintf("goto label_%d;", target))
 			}
@@ -1740,6 +1742,18 @@ func isGotoLine(line string) bool {
 	}
 	_, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(line, "goto label_"), ";"))
 	return err == nil
+}
+
+func isJumpPadding(code []instruction, start, end int) bool {
+	if start >= end {
+		return false
+	}
+	for i := start; i < end; i++ {
+		if code[i].op != opJmp && code[i].op != opNone {
+			return false
+		}
+	}
+	return true
 }
 
 func recoverProfileCloneBlocks(lines []string) []string {

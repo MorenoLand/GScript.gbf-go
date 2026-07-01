@@ -653,6 +653,19 @@ func TestJmpToRangeEndStopsBodyLeak(t *testing.T) {
 	}
 }
 
+func TestForwardJumpPaddingIsSkipped(t *testing.T) {
+	code := []instruction{
+		{addr: 0, op: opJmp, operand: &operand{number: 2, kind: "number"}},
+		{addr: 1, op: opJmp, operand: &operand{number: 3, kind: "number"}},
+		{addr: 2, op: opPushVariable, operand: &operand{str: "done"}},
+		{addr: 3, op: opPop},
+	}
+	got := strings.Join(decompileRange(code, 0, len(code), 0), "\n")
+	if strings.Contains(got, "goto label_") {
+		t.Fatalf("jump padding emitted goto:\n%s", got)
+	}
+}
+
 func TestDynamicMemberNameIsParenthesized(t *testing.T) {
 	code := []instruction{
 		{addr: 0, op: opThis},
