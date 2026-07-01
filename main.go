@@ -806,17 +806,17 @@ func decompileRangeWithStateAndStack(code []instruction, start, end, indent int,
 		case opObjSubArray:
 			stack = append(stack, objectCall(&stack, "subarray", 2, false))
 		case opObjAddString:
-			stack = append(stack, objectCall(&stack, "add", 1, true))
+			lines = append(lines, pad(indent)+objectCall(&stack, "add", 1, true).text+";")
 		case opObjDeleteString:
-			stack = append(stack, objectCall(&stack, "delete", 1, true))
+			lines = append(lines, pad(indent)+objectCall(&stack, "delete", 1, true).text+";")
 		case opObjRemoveString:
-			stack = append(stack, objectCall(&stack, "remove", 1, true))
+			lines = append(lines, pad(indent)+objectCall(&stack, "remove", 1, true).text+";")
 		case opObjReplaceString:
-			stack = append(stack, objectCall(&stack, "replace", 2, true))
+			lines = append(lines, pad(indent)+objectCall(&stack, "replace", 2, true).text+";")
 		case opObjInsertString:
-			stack = append(stack, objectCall(&stack, "insert", 2, true))
+			lines = append(lines, pad(indent)+objectCall(&stack, "insert", 2, true).text+";")
 		case opObjClear:
-			stack = append(stack, objectCall(&stack, "clear", 0, true))
+			lines = append(lines, pad(indent)+objectCall(&stack, "clear", 0, true).text+";")
 		case opNewMultiDimArray:
 			stack = append(stack, newMultiDimArrayExpr(&stack))
 		case opAssign:

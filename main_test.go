@@ -1064,3 +1064,26 @@ func TestAnonymousGuiAssignmentConstructorClosesWithSemicolon(t *testing.T) {
 		t.Fatalf("anonymous assignment constructor:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+func TestPendingObjectCallStatementIsEmitted(t *testing.T) {
+	lines := decompileRange([]instruction{
+		{addr: 0, op: opPushVariable, operand: &operand{str: "this"}},
+		{addr: 1, op: opPushVariable, operand: &operand{str: "data"}},
+		{addr: 2, op: opAccessMember},
+		{addr: 3, op: opPushNumber, operand: &operand{number: 1, kind: "number"}},
+		{addr: 4, op: opArrayAccess},
+		{addr: 5, op: opPushVariable, operand: &operand{str: "block"}},
+		{addr: 6, op: opEqual},
+		{addr: 7, op: opJne, operand: &operand{number: 13, kind: "number"}},
+		{addr: 8, op: opPushVariable, operand: &operand{str: "temp"}},
+		{addr: 9, op: opPushVariable, operand: &operand{str: "surround"}},
+		{addr: 10, op: opAccessMember},
+		{addr: 11, op: opPushVariable, operand: &operand{str: "check_i"}},
+		{addr: 12, op: opObjAddString},
+	}, 0, 13, 0)
+
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "temp.surround.add(check_i);") {
+		t.Fatalf("pending object call:\n%s", got)
+	}
+}
